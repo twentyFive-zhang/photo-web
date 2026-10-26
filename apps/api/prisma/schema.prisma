@@ -1,0 +1,202 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Visibility {
+  PUBLIC
+  UNLISTED
+}
+
+enum PhotoVariant {
+  THUMB
+  DISPLAY
+  LARGE
+}
+
+enum ImageFormat {
+  WEBP
+  JPEG
+}
+
+enum ImportSource {
+  BAIDU
+  LOCAL
+}
+
+enum ImportStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  PARTIAL
+  FAILED
+}
+
+enum ImportItemStatus {
+  PENDING
+  DOWNLOADING
+  PROCESSING
+  SUCCEEDED
+  SKIPPED
+  FAILED
+}
+
+model Admin {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Album {
+  id           String     @id @default(cuid())
+  publicId     String     @unique
+  shareToken   String     @unique
+  title        String
+  description  String?
+  coverPhotoId String?    @unique
+  visibility   Visibility @default(UNLISTED)
+  publishedAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  coverPhoto Photo?      @relation("AlbumCover", fields: [coverPhotoId], references: [id], onDelete: SetNull)
+  photos     Photo[]     @relation("AlbumPhotos")
+  importJobs ImportJob[]
+
+  @@index([visibility, publishedAt])
+}
+
+model Photo {
+  id          String   @id @default(cuid())
+  publicId    String   @unique
+  albumId     String
+  title       String?
+  caption     String?
+  originalKey String   @unique
+  sha256      String   @unique
+  width       Int
+  height      Int
+  exif        Json?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  album        Album           @relation("AlbumPhotos", fields: [albumId], references: [id], onDelete: Cascade)
+  coverOfAlbum Album?          @relation("AlbumCover")
+  renditions   PhotoRendition[]
+  tags         PhotoTag[]
+  featured     FeaturedPhoto?
+  importItems  ImportItem[]
+
+  @@index([albumId, sortOrder])
+}
+
+model PhotoRendition {
+  id      String       @id @default(cuid())
+  photoId String
+  variant PhotoVariant
+  format  ImageFormat
+  key     String       @unique
+  width   Int
+  height  Int
+  bytes   Int
+
+  photo Photo @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@unique([photoId, variant, format])
+}
+
+model Tag {
+  id     String     @id @default(cuid())
+  name   String     @unique
+  photos PhotoTag[]
+}
+
+model PhotoTag {
+  photoId String
+  tagId   String
+
+  photo Photo @relation(fields: [photoId], references: [id], onDelete: Cascade)
+  tag   Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([photoId, tagId])
+  @@index([tagId])
+}
+
+model FeaturedPhoto {
+  photoId   String   @id
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  photo Photo @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@index([sortOrder])
+}
+
+model ImportJob {
+  id        String       @id @default(cuid())
+  source    ImportSource
+  status    ImportStatus @default(QUEUED)
+  albumId   String
+  total     Int          @default(0)
+  completed Int          @default(0)
+  failed    Int          @default(0)
+  skipped   Int          @default(0)
+  error     String?
+  payload   Json?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  album Album        @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  items ImportItem[]
+
+  @@index([status, createdAt])
+  @@index([albumId])
+}
+
+model ImportItem {
+  id           String           @id @default(cuid())
+  jobId        String
+  sourceFileId String
+  filename     String
+  status       ImportItemStatus @default(PENDING)
+  error        String?
+  photoId      String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  job   ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  photo Photo?    @relation(fields: [photoId], references: [id], onDelete: SetNull)
+
+  @@unique([jobId, sourceFileId])
+  @@index([jobId])
+  @@index([status])
+}
+
+model BaiduCredential {
+  id           String   @id @default("singleton")
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  scope        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model SiteSetting {
+  id              String   @id @default("singleton")
+  siteName        String   @default("江流儿摄影")
+  siteDescription String   @default("")
+  about           String   @default("")
+  contactEmail    String?
+  wechatQrKey     String?
+  socialLinks     Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
