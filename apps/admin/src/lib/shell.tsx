@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
+import { AdminQrDialog } from "../features/albums/qr-dialog.jsx";
 import { apiFetch } from "./api.js";
 
 export function useLogoutMutation() {
@@ -15,15 +16,16 @@ export function useLogoutMutation() {
   });
 }
 
-/** 后台页骨架：顶部导航（专辑 / 精选 / 设置）+ 登出。 */
+/** 后台页骨架：顶部导航（专辑 / 精选 / 设置）+ 手机管理 + 登出。 */
 export function AdminShell({ children }: { children: ReactNode }) {
   const logout = useLogoutMutation();
+  const [showPhoneQr, setShowPhoneQr] = useState(false);
 
   return (
     <div className="min-h-screen">
       <header className="border-b border-neutral-800">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-8 py-4">
-          <nav className="flex gap-6">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-8 sm:py-4">
+          <nav className="flex gap-4 sm:gap-6">
             <Link
               className="text-sm text-neutral-300 hover:text-white"
               to="/albums"
@@ -43,17 +45,27 @@ export function AdminShell({ children }: { children: ReactNode }) {
               站点设置
             </Link>
           </nav>
-          <button
-            className="text-sm text-neutral-500 hover:text-white"
-            disabled={logout.isPending}
-            onClick={() => logout.mutate()}
-            type="button"
-          >
-            退出登录
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              className="text-sm text-neutral-400 hover:text-white"
+              onClick={() => setShowPhoneQr(true)}
+              type="button"
+            >
+              手机管理
+            </button>
+            <button
+              className="text-sm text-neutral-500 hover:text-white"
+              disabled={logout.isPending}
+              onClick={() => logout.mutate()}
+              type="button"
+            >
+              退出登录
+            </button>
+          </div>
         </div>
       </header>
       {children}
+      {showPhoneQr && <AdminQrDialog onClose={() => setShowPhoneQr(false)} />}
     </div>
   );
 }

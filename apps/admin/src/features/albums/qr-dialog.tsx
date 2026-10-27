@@ -32,6 +32,15 @@ function downloadDataUrl(dataUrl: string, filename: string) {
   link.click();
 }
 
+/** 二维码里用的后台地址：优先 VITE_PUBLIC_ADMIN_BASE_URL，否则当前 hostname 拼 dev 端口。 */
+export function adminBaseUrl(): string {
+  const configured = import.meta.env.VITE_PUBLIC_ADMIN_BASE_URL;
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+  return `http://${window.location.hostname}:5173/admin`;
+}
+
 function QrCard({
   label,
   url,
@@ -148,6 +157,38 @@ export function QrDialog({
             url={shareUrl}
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** "手机管理"弹窗：扫码在手机上打开后台。 */
+export function AdminQrDialog({ onClose }: { onClose: () => void }) {
+  return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: 弹窗遮罩点击关闭，关闭有按钮
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      role="dialog"
+    >
+      <div className="w-full max-w-sm space-y-4 rounded-2xl border border-neutral-800 bg-neutral-950 p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-medium">手机管理</h2>
+          <button
+            className="text-sm text-neutral-500 hover:text-white"
+            onClick={onClose}
+            type="button"
+          >
+            关闭
+          </button>
+        </div>
+        <QrCard
+          filename="admin-qr.png"
+          label="后台管理地址"
+          url={`${adminBaseUrl()}/`}
+        />
       </div>
     </div>
   );

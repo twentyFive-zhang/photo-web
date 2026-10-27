@@ -56,7 +56,7 @@ function FeaturedList() {
   }
 
   return (
-    <main className="mx-auto min-h-screen max-w-4xl space-y-6 p-8">
+    <main className="mx-auto min-h-screen max-w-4xl space-y-6 p-4 sm:p-8">
       <div className="space-y-1">
         <h1 className="text-2xl font-medium">精选</h1>
         <p className="text-sm text-neutral-500">

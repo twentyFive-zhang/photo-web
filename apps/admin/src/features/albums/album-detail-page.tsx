@@ -176,8 +176,8 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   const album = albumQuery.data;
 
   return (
-    <main className="mx-auto min-h-screen max-w-6xl space-y-6 p-8">
-      <div className="flex items-start justify-between gap-4">
+    <main className="mx-auto min-h-screen max-w-6xl space-y-6 p-4 sm:p-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
           <Link
             className="text-sm text-neutral-500 hover:text-white"
@@ -351,8 +351,8 @@ function AlbumDetail({ albumId }: { albumId: string }) {
                 </span>
               )}
 
-              {/* 操作按钮 */}
-              <div className="absolute inset-x-0 bottom-0 hidden flex-wrap gap-1 bg-black/70 p-2 group-hover:flex">
+              {/* 操作按钮：手机无常显 hover，小屏直接展示 */}
+              <div className="absolute inset-x-0 bottom-0 flex flex-wrap gap-1 bg-black/70 p-2 sm:hidden sm:group-hover:flex">
                 <SmallButton
                   disabled={index === 0}
                   onClick={() => move(photo.id, -1)}

@@ -8,6 +8,8 @@ export default defineConfig({
   envDir: "../..",
   plugins: [react(), tailwindcss()],
   server: {
+    // 暴露到局域网，手机扫码直接访问后台
+    host: true,
     port: 5173,
     proxy: {
       "/api": {

@@ -36,7 +36,7 @@ export function AlbumsPage() {
 
   return (
     <AdminShell>
-      <main className="mx-auto min-h-screen max-w-4xl space-y-8 p-8">
+      <main className="mx-auto min-h-screen max-w-4xl space-y-8 p-4 sm:p-8">
         <h1 className="text-2xl font-medium">专辑</h1>
 
         <form className="flex gap-2" onSubmit={handleCreate}>

@@ -66,7 +66,7 @@ function SettingsForm() {
   if (!settings) return null;
 
   return (
-    <main className="mx-auto min-h-screen max-w-3xl space-y-8 p-8">
+    <main className="mx-auto min-h-screen max-w-3xl space-y-8 p-4 sm:p-8">
       <h1 className="text-2xl font-medium">站点设置</h1>
       {error && <p className="text-sm text-red-400">{error}</p>}
 
