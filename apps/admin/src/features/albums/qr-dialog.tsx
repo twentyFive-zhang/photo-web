@@ -1,5 +1,5 @@
 import type { Album } from "@photo/shared";
-import { Copy, Download, X } from "lucide-react";
+import { Copy, Download, ExternalLink, X } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -74,7 +74,15 @@ function QrCard({
           生成中…
         </div>
       )}
-      <p className="text-xs break-all text-neutral-500">{url}</p>
+      <a
+        className="flex items-center justify-center gap-1 text-xs break-all text-neutral-500 hover:text-neutral-300"
+        href={url}
+        rel="noopener noreferrer"
+        target="_blank"
+      >
+        {url}
+        <ExternalLink size={11} className="shrink-0" />
+      </a>
       <div className="flex justify-center gap-2">
         <button
           className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-400"
