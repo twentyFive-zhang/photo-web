@@ -1,7 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
+import { RedisStore } from "connect-redis";
 import type { NextFunction, Request, Response } from "express";
+import session from "express-session";
+import { createClient } from "redis";
 import swaggerUi from "swagger-ui-express";
 import { AppModule } from "./app.module.js";
 import { buildOpenApiDocument } from "./openapi.js";
@@ -17,14 +20,40 @@ async function bootstrap() {
     "http://localhost:5173/admin",
   );
   const adminOrigin = new URL(adminUrl).origin;
+  const nodeEnv = config.get<string>("NODE_ENV", "development");
 
   app.enableCors({
     origin: [siteUrl, adminOrigin],
     credentials: true,
   });
 
+  // 生产环境在 Caddy 反代后面，信任第一层代理以获得真实 IP（限流依赖）
+  if (nodeEnv === "production") {
+    const expressInstance = app.getHttpAdapter().getInstance();
+    expressInstance.set("trust proxy", 1);
+  }
+
+  // 管理员 session：Redis 存储，HttpOnly/Secure/SameSite=Lax
+  // connect-redis v10 只支持 node-redis（ioredis 留给 M5 的 BullMQ）
+  const redis = createClient({ url: config.getOrThrow<string>("REDIS_URL") });
+  await redis.connect();
+  app.use(
+    session({
+      store: new RedisStore({ client: redis, prefix: "photo:sess:" }),
+      secret: config.getOrThrow<string>("SESSION_SECRET"),
+      name: "photo.sid",
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: nodeEnv === "production",
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      },
+    }),
+  );
+
   if (config.get<boolean>("SWAGGER_ENABLED", true)) {
-    const nodeEnv = config.get<string>("NODE_ENV", "development");
     const swaggerUser = config.get<string>("SWAGGER_USER", "admin");
     const swaggerPassword = config.get<string>("SWAGGER_PASSWORD");
 

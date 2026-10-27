@@ -17,6 +17,11 @@
     "indentStyle": "space",
     "indentWidth": 2
   },
+  "javascript": {
+    "parser": {
+      "unsafeParameterDecoratorsEnabled": true
+    }
+  },
   "css": {
     "parser": {
       "tailwindDirectives": true
