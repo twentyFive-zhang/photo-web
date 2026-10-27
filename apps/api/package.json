@@ -37,18 +37,18 @@
     "rxjs": "^7.8.1",
     "sharp": "^0.35.5",
     "swagger-ui-express": "^5.0.1",
-    "zod": "^4.6.7"
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.0",
     "@nestjs/schematics": "^12.0.0",
     "@types/express": "^5.0.0",
     "@types/express-session": "^1.19.0",
-    "@types/node": "^24.0.0",
+    "@types/node": "catalog:",
     "@types/swagger-ui-express": "^4.1.8",
     "prisma": "6.19.3",
     "source-map-support": "^0.5.21",
-    "typescript": "6.0.3"
+    "typescript": "catalog:"
   },
   "trustedDependencies": [
     "@prisma/client",

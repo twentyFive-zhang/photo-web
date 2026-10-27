@@ -8,6 +8,17 @@
     "apps/*",
     "packages/*"
   ],
+  "catalog": {
+    "@biomejs/biome": "2.4.2",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3",
+    "zod": "4.6.7"
+  },
   "scripts": {
     "dev": "bun run build:shared && concurrently -n web,admin,api -c cyan,magenta,green \"bun run --cwd apps/web dev\" \"bun run --cwd apps/admin dev\" \"bun run --cwd apps/api start:dev\"",
     "build": "bun run build:shared && bun run --cwd apps/web build && bun run --cwd apps/admin build && bun run --cwd apps/api build",
@@ -22,9 +33,9 @@
     "db:seed": "bun run --cwd apps/api prisma:seed"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.2",
+    "@biomejs/biome": "catalog:",
     "concurrently": "^9.2.1",
-    "typescript": "6.0.3"
+    "typescript": "catalog:"
   },
   "engines": {
     "node": ">=24"
