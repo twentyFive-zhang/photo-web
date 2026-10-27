@@ -151,25 +151,40 @@ bun run dev
 - 设置 `SWAGGER_PASSWORD` 后，dev 也走 Basic Auth；生产必须设置。
 - `.env` 已被 git 忽略，不要提交。
 
-## 6. 下一步（里程碑 2）
+## 6. 里程碑规划（2026-10-27 重排）
 
-1. **认证**：登录/登出/me/改密；Argon2；Redis session；throttler；admin guard。
-2. **内容 CRUD**：专辑/照片/标签/精选/站点设置；`publicId` / `shareToken`；`visibility` / `publishedAt`；排序/批量移动/删除；封面。
-3. **本地上传**：multipart → `StorageService`（Local/COS）→ Sharp 三档 → EXIF 提取/去元数据 → DB 记录；`ImportJob` / `ImportItem`。
-4. **前台**：首页、专辑列表/详情、照片页、`/s/:shareToken`、关于/联系、SEO/OG。
-5. **百度导入**：OAuth、文件浏览、BullMQ job、进度/重试。
-6. **部署**：Caddy、生产 Compose、COS/CDN、ICP、备份、监控。
-7. **小程序二期**。
+里程碑 1 已完成。原"里程碑 2"过大，已拆分为 M2-M6，按"尽快打通上传→展示纵向切片"排序：
 
-### 待确认 / 未定
+| 里程碑 | 内容 | 完成标志 |
+|---|---|---|
+| **M2 认证 + 内容 CRUD** | 登录/me/改密、专辑/照片/标签/精选/站点设置 CRUD、`publicId`/`shareToken`/`visibility`、排序/批量移动/删除、封面 | Swagger 里能 curl 全套接口，seed 出可见数据 |
+| **M3 上传 + 展示（纵向切片）** | 最小本地上传（原件 + 三档 WebP + EXIF）→ 最小前台（专辑详情 + 灯箱） | 从后台上传一张照片，前台能打开看到 |
+| **M4 后台完整 + 前台完整** | 排序/批量操作/封面/精选排序、首页/列表页/关于/联系页/SEO/OG、`/s/:shareToken` | 站点达到"能用版本" |
+| **M5 百度网盘导入** | OAuth、目录浏览、BullMQ job、进度/重试 | 从网盘导入一个文件夹成功，失败可重试 |
+| **M6 部署上线** | Caddy、生产 Compose、COS/CDN、ICP、备份、监控、GitHub remote + CI | jiangliuer.com 可访问 |
+| **M7 小程序**（二期） | Taro 只读浏览 | — |
 
-- 公开 URL 具体格式（建议 `/albums/:publicId`、`/photos/:publicId`、`/s/:shareToken`）。
-- 三档图精确尺寸/质量（建议 400/1600/2560，WebP + JPEG）。
-- `shareToken` 是否支持轮换。
-- 专辑封面是否默认取第一张、是否允许空封面。
-- 标签规范化规则（大小写/空白）。
-- ICP/域名采购、腾讯云账号、百度开放平台应用、GitHub remote/CI。
-- 部署与备份细节。
+排序理由：M3 的纵向切片尽早暴露高风险项（Sharp 三档图、`StorageService`、Cache Components）；百度导入（M5）复用同一套上传流水线；ICP 备案周期 1-3 周，可与 M3-M5 并行启动。
+
+### 立即行动（不等里程碑开始）
+
+- **现在就申请百度开放平台应用**（文件读取/下载权限），审批周期不可控，M5 的硬前置。
+- 域名/ICP 备案、腾讯云账号确认可与服务端开发并行推进。
+
+### 任务分类（GitHub remote 配好后启用）
+
+用 milestone + label 两维：
+
+- 领域 label：`api` / `web` / `admin` / `shared` / `db` / `deploy`
+- 类型 label：`feature` / `bug` / `chore` / `docs` / `spike`
+- 状态 label：`blocked`（等百度审批、等 ICP）/ `decision`（对应下方待确认项）
+
+remote 配好前不引入任务工具，用本文件 + conventional commit 前缀跟踪。
+
+### 决策任务（对应里程碑开头关闭）
+
+- **M2 开头**：公开 URL 格式（建议 `/albums/:publicId`、`/photos/:publicId`、`/s/:shareToken`）；`shareToken` 是否支持轮换；专辑封面默认规则（是否取第一张、允许空封面）；标签规范化规则（大小写/空白）。—— 均影响 schema，先定后写。
+- **M3 开头**：三档图尺寸/质量 —— 直接定为 400/1600/2560，WebP + JPEG，不再悬置。
 
 ## 7. 下次启动检查
 
