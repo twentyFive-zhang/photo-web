@@ -3,6 +3,9 @@ import type {
   Album,
   CreateAlbumInput,
   PhotoSummary,
+  PublicAlbum,
+  PublicAlbumSummary,
+  PublicPhoto,
   ReorderPhotosInput,
   UpdateAlbumInput,
 } from "@photo/shared";
@@ -10,6 +13,8 @@ import { Prisma } from "@prisma/client";
 import { generatePublicId, generateShareToken } from "../common/id.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PrismaService } from "../prisma/prisma.service.js";
+// biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
+import { StorageService } from "../storage/storage.service.js";
 
 const isUniqueViolation = (
   error: unknown,
@@ -69,7 +74,10 @@ function toAlbum(album: AlbumWithCover): Album {
 
 @Injectable()
 export class AlbumService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   async list(): Promise<Album[]> {
     const albums = await this.prisma.album.findMany({
@@ -258,5 +266,93 @@ export class AlbumService {
         }),
       ),
     );
+  }
+
+  // ---- 公开视图（无需登录） ----
+
+  private thumbUrlOf(coverPhoto: {
+    renditions: { variant: string; key: string }[];
+  }): string | null {
+    const thumb = coverPhoto.renditions.find((r) => r.variant === "THUMB");
+    return thumb ? this.storage.publicUrl(thumb.key) : null;
+  }
+
+  /** 公开专辑列表（按发布时间倒序），用于前台专辑列表与首页。 */
+  async listPublic(): Promise<PublicAlbumSummary[]> {
+    const albums = await this.prisma.album.findMany({
+      where: { visibility: "PUBLIC" },
+      orderBy: { publishedAt: "desc" },
+      include: {
+        coverPhoto: {
+          include: { renditions: { where: { variant: "THUMB" as const } } },
+        },
+        photos: {
+          // 封面回落：排序第一张
+          take: 1,
+          orderBy: { sortOrder: "asc" as const },
+          include: { renditions: { where: { variant: "THUMB" as const } } },
+        },
+        _count: { select: { photos: true } },
+      },
+    });
+
+    return albums.map((album) => ({
+      publicId: album.publicId,
+      title: album.title,
+      description: album.description,
+      photoCount: album._count.photos,
+      publishedAt: album.publishedAt?.toISOString() ?? null,
+      coverUrl: album.coverPhoto
+        ? this.thumbUrlOf(album.coverPhoto)
+        : album.photos[0]
+          ? this.thumbUrlOf(album.photos[0])
+          : null,
+    }));
+  }
+
+  /** 公开专辑详情：publicId 即入口（公开 / 仅链接可见均可访问）。 */
+  async getPublic(publicId: string): Promise<PublicAlbum> {
+    const album = await this.prisma.album.findUnique({
+      where: { publicId },
+      include: {
+        photos: {
+          orderBy: { sortOrder: "asc" },
+          include: {
+            renditions: true,
+            tags: { include: { tag: true } },
+          },
+        },
+      },
+    });
+    if (!album) {
+      throw new NotFoundException("专辑不存在");
+    }
+
+    const photos: PublicPhoto[] = album.photos.map((photo) => ({
+      publicId: photo.publicId,
+      title: photo.title,
+      caption: photo.caption,
+      width: photo.width,
+      height: photo.height,
+      exif: (photo.exif as PublicPhoto["exif"]) ?? null,
+      sortOrder: photo.sortOrder,
+      renditions: photo.renditions.map((rendition) => ({
+        variant: rendition.variant,
+        format: rendition.format,
+        width: rendition.width,
+        height: rendition.height,
+        bytes: rendition.bytes,
+        url: this.storage.publicUrl(rendition.key),
+      })),
+      tags: photo.tags.map(({ tag }) => ({ id: tag.id, name: tag.name })),
+    }));
+
+    return {
+      publicId: album.publicId,
+      title: album.title,
+      description: album.description,
+      publishedAt: album.publishedAt?.toISOString() ?? null,
+      photos,
+    };
   }
 }

@@ -33,6 +33,8 @@ const envSchema = z.object({
   COS_BUCKET: z.string().optional(),
   COS_REGION: z.string().optional(),
   CDN_BASE_URL: z.url().default("http://localhost:3001/media"),
+  // 本地磁盘存储根目录（相对 API 进程 cwd）；生产 COS 部署后仅作上传暂存
+  STORAGE_DIR: z.string().default("var/storage"),
 });
 
 export type Env = z.infer<typeof envSchema>;

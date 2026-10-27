@@ -11,6 +11,7 @@ import { FeaturedModule } from "./featured/featured.module.js";
 import { PhotoModule } from "./photo/photo.module.js";
 import { PrismaModule } from "./prisma/prisma.module.js";
 import { SettingsModule } from "./settings/settings.module.js";
+import { StorageModule } from "./storage/storage.module.js";
 import { TagModule } from "./tag/tag.module.js";
 
 @Module({
@@ -23,6 +24,7 @@ import { TagModule } from "./tag/tag.module.js";
     // 全局限流：每 IP 每分钟 100 次；登录接口单独收紧
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     PrismaModule,
+    StorageModule,
     AuthModule,
     AlbumModule,
     PhotoModule,

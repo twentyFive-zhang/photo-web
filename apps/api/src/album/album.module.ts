@@ -1,11 +1,13 @@
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module.js";
+import { PhotoModule } from "../photo/photo.module.js";
 import { AlbumController } from "./album.controller.js";
 import { AlbumService } from "./album.service.js";
+import { AlbumPublicController } from "./album-public.controller.js";
 
 @Module({
-  imports: [AuthModule],
-  controllers: [AlbumController],
+  imports: [AuthModule, PhotoModule],
+  controllers: [AlbumController, AlbumPublicController],
   providers: [AlbumService],
 })
 export class AlbumModule {}

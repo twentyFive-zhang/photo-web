@@ -11,6 +11,8 @@ import {
   featuredItemSchema,
   loginInputSchema,
   photoSchema,
+  publicAlbumSchema,
+  publicAlbumSummarySchema,
   reorderPhotosInputSchema,
   setFeaturedInputSchema,
   setPhotoTagsInputSchema,
@@ -35,6 +37,10 @@ export function buildOpenApiDocument(): OpenApiDocument {
   const tag = tagSchema.meta({ id: "Tag" });
   const featuredItem = featuredItemSchema.meta({ id: "FeaturedItem" });
   const siteSetting = siteSettingSchema.meta({ id: "SiteSetting" });
+  const publicAlbumSummary = publicAlbumSummarySchema.meta({
+    id: "PublicAlbumSummary",
+  });
+  const publicAlbum = publicAlbumSchema.meta({ id: "PublicAlbum" });
 
   registry.registerComponent("securitySchemes", "sessionCookie", {
     type: "apiKey",
@@ -182,6 +188,50 @@ export function buildOpenApiDocument(): OpenApiDocument {
       body: { content: json(reorderPhotosInputSchema) },
     },
     responses: { ...noContent(), 404: { description: "不存在或不属于该专辑" } },
+  });
+
+  registry.registerPath({
+    method: "post",
+    path: "/api/admin/albums/{id}/photos/upload",
+    summary: "本地上传照片到专辑（multipart，字段 file；JPEG/PNG/WebP ≤50MB）",
+    tags: ["albums"],
+    security,
+    request: {
+      params: z.object({ id: z.string() }),
+      body: {
+        content: {
+          "multipart/form-data": {
+            schema: z.object({ file: z.string() }),
+          },
+        },
+      },
+    },
+    responses: {
+      ...ok(photo, "已上传的照片"),
+      404: { description: "专辑不存在" },
+      409: { description: "相同内容的照片已存在" },
+      415: { description: "不支持的文件类型或超过大小上限" },
+    },
+  });
+
+  // ---------- public（访客） ----------
+  registry.registerPath({
+    method: "get",
+    path: "/api/albums",
+    summary: "公开专辑列表（按发布时间倒序）",
+    tags: ["public"],
+    responses: ok(z.array(publicAlbumSummary), "公开专辑列表"),
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/albums/{publicId}",
+    summary: "公开专辑详情（公开与仅链接可见均可访问）",
+    tags: ["public"],
+    request: { params: z.object({ publicId: z.string() }) },
+    responses: {
+      ...ok(publicAlbum, "专辑详情（含照片 rendition URL）"),
+      404: { description: "不存在" },
+    },
   });
 
   // ---------- photos ----------

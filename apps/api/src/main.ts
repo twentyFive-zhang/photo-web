@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { RedisStore } from "connect-redis";
 import type { NextFunction, Request, Response } from "express";
 import session from "express-session";
@@ -8,9 +9,10 @@ import { createClient } from "redis";
 import swaggerUi from "swagger-ui-express";
 import { AppModule } from "./app.module.js";
 import { buildOpenApiDocument } from "./openapi.js";
+import { StorageService } from "./storage/storage.service.js";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.setGlobalPrefix("api");
 
   const config = app.get(ConfigService);
@@ -52,6 +54,10 @@ async function bootstrap() {
       },
     }),
   );
+
+  // 本地存储的公开文件（rendition / 原件）；M6 换 COS + CDN 后由 CDN 回源
+  // biome-ignore lint/correctness/useHookAtTopLevel: NestJS 静态资源挂载方法，非 React hook
+  app.useStaticAssets(app.get(StorageService).rootPath, { prefix: "/media" });
 
   if (config.get<boolean>("SWAGGER_ENABLED", true)) {
     const swaggerUser = config.get<string>("SWAGGER_USER", "admin");

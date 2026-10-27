@@ -49,6 +49,18 @@ export {
   updatePhotoInputSchema,
 } from "./photo.js";
 export type {
+  PublicAlbum,
+  PublicAlbumSummary,
+  PublicPhoto,
+  PublicRendition,
+} from "./public.js";
+export {
+  publicAlbumSchema,
+  publicAlbumSummarySchema,
+  publicPhotoSchema,
+  publicRenditionSchema,
+} from "./public.js";
+export type {
   SiteSetting,
   SocialLink,
   UpdateSiteSettingInput,
