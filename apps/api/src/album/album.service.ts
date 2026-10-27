@@ -161,9 +161,20 @@ export class AlbumService {
   }
 
   async remove(id: string): Promise<void> {
+    // 级联删除在 DB 层完成；存储文件需先收集、删库后清理
+    const photos = await this.prisma.photo.findMany({
+      where: { albumId: id },
+      select: { originalKey: true, renditions: { select: { key: true } } },
+    });
     await this.prisma.album.delete({ where: { id } }).catch(() => {
       throw new NotFoundException("专辑不存在");
     });
+    await this.storage.deleteMany(
+      photos.flatMap((photo) => [
+        photo.originalKey,
+        ...photo.renditions.map((rendition) => rendition.key),
+      ]),
+    );
   }
 
   /** 轮换 shareToken：旧链接立即失效。 */
@@ -327,7 +338,53 @@ export class AlbumService {
     if (!album) {
       throw new NotFoundException("专辑不存在");
     }
+    return this.toPublicAlbum(album);
+  }
 
+  /** 仅链接可见专辑入口：24 位 shareToken，不可猜测。 */
+  async getPublicByShareToken(shareToken: string): Promise<PublicAlbum> {
+    const album = await this.prisma.album.findUnique({
+      where: { shareToken },
+      include: {
+        photos: {
+          orderBy: { sortOrder: "asc" },
+          include: {
+            renditions: true,
+            tags: { include: { tag: true } },
+          },
+        },
+      },
+    });
+    if (!album) {
+      throw new NotFoundException("专辑不存在或链接已失效");
+    }
+    return this.toPublicAlbum(album);
+  }
+
+  private toPublicAlbum(album: {
+    publicId: string;
+    title: string;
+    description: string | null;
+    publishedAt: Date | null;
+    photos: {
+      publicId: string;
+      title: string | null;
+      caption: string | null;
+      width: number;
+      height: number;
+      exif: unknown;
+      sortOrder: number;
+      renditions: {
+        variant: "THUMB" | "DISPLAY" | "LARGE";
+        format: "WEBP" | "JPEG";
+        width: number;
+        height: number;
+        bytes: number;
+        key: string;
+      }[];
+      tags: { tag: { id: string; name: string } }[];
+    }[];
+  }): PublicAlbum {
     const photos: PublicPhoto[] = album.photos.map((photo) => ({
       publicId: photo.publicId,
       title: photo.title,

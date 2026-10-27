@@ -2,7 +2,7 @@ import type { PublicAlbumSummary } from "@photo/shared";
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { fetchApi } from "@/lib/api";
+import { fetchApi } from "@/lib/fetch-api";
 
 export const metadata = {
   title: "专辑",

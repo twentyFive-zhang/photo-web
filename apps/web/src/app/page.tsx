@@ -1,12 +1,12 @@
-import type { PublicAlbumSummary } from "@photo/shared";
+import type { PublicAlbumSummary, PublicFeaturedPhoto } from "@photo/shared";
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { fetchApi } from "@/lib/api";
+import { fetchApi } from "@/lib/fetch-api";
 
 export default function Home() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-6 py-24">
+    <main className="flex min-h-screen flex-col items-center px-6 py-24">
       <section className="w-full max-w-2xl space-y-6 text-center">
         <p className="text-xs uppercase tracking-[0.35em] text-neutral-500">
           Jiangliuer Photography
@@ -27,11 +27,56 @@ export default function Home() {
         </Link>
       </section>
 
-      {/* 最新专辑：运行时数据，Suspense 内动态流式渲染 */}
+      {/* 精选 + 最新专辑：运行时数据，Suspense 内动态流式渲染 */}
+      <Suspense fallback={null}>
+        <FeaturedStrip />
+      </Suspense>
       <Suspense fallback={null}>
         <LatestAlbums />
       </Suspense>
     </main>
+  );
+}
+
+async function FeaturedStrip() {
+  await connection();
+
+  let photos: PublicFeaturedPhoto[] = [];
+  try {
+    photos = await fetchApi<PublicFeaturedPhoto[]>("/featured");
+  } catch {
+    // API 不可用时隐藏区块
+    return null;
+  }
+  if (photos.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="mt-20 w-full max-w-4xl space-y-5">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-lg font-medium text-neutral-200">精选</h2>
+      </div>
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {photos.map((photo) => {
+          const thumb = photo.renditions.find((r) => r.variant === "DISPLAY");
+          if (!thumb) return null;
+          return (
+            <li key={photo.publicId}>
+              <Link href={`/albums/${photo.album.publicId}`}>
+                {/* biome-ignore lint/performance/noImgElement: 图 URL 来自 API rendition（本地 /media），不走 next/image 优化 */}
+                <img
+                  alt={photo.title ?? "精选照片"}
+                  className="aspect-square w-full rounded-xl object-cover transition-opacity hover:opacity-80"
+                  loading="lazy"
+                  src={thumb.url}
+                />
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 

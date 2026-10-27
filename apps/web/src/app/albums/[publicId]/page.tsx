@@ -4,7 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { fetchApi } from "@/lib/api";
+import { fetchApi } from "@/lib/fetch-api";
 import { PhotoGallery } from "./photo-gallery";
 
 type PageProps = { params: Promise<{ publicId: string }> };

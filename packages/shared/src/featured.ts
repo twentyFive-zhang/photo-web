@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { photoSummarySchema } from "./album.js";
 
-/** 精选列表项（全站独立列表，顺序人工排）。 */
+/** 精选列表项（全站独立列表，顺序人工排）。thumbKey 供后台缩略图（/media/{key}）。 */
 export const featuredItemSchema = z.object({
   photoId: z.string(),
   sortOrder: z.number().int(),
   createdAt: z.string(),
   photo: photoSummarySchema,
+  thumbKey: z.string().nullable(),
 });
 export type FeaturedItem = z.infer<typeof featuredItemSchema>;
 

@@ -24,7 +24,10 @@ export {
   loginInputSchema,
   visibilitySchema,
 } from "./auth.js";
-export type { FeaturedItem, SetFeaturedInput } from "./featured.js";
+export type {
+  FeaturedItem,
+  SetFeaturedInput,
+} from "./featured.js";
 export { featuredItemSchema, setFeaturedInputSchema } from "./featured.js";
 export type { ApiHealth } from "./health.js";
 export { API_PREFIX, apiHealthSchema, SITE_NAME } from "./health.js";
@@ -51,14 +54,18 @@ export {
 export type {
   PublicAlbum,
   PublicAlbumSummary,
+  PublicFeaturedPhoto,
   PublicPhoto,
   PublicRendition,
+  PublicSiteSetting,
 } from "./public.js";
 export {
   publicAlbumSchema,
   publicAlbumSummarySchema,
+  publicFeaturedPhotoSchema,
   publicPhotoSchema,
   publicRenditionSchema,
+  publicSiteSettingSchema,
 } from "./public.js";
 export type {
   SiteSetting,

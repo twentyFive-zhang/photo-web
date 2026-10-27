@@ -13,6 +13,8 @@ import {
   photoSchema,
   publicAlbumSchema,
   publicAlbumSummarySchema,
+  publicFeaturedPhotoSchema,
+  publicSiteSettingSchema,
   reorderPhotosInputSchema,
   setFeaturedInputSchema,
   setPhotoTagsInputSchema,
@@ -41,6 +43,12 @@ export function buildOpenApiDocument(): OpenApiDocument {
     id: "PublicAlbumSummary",
   });
   const publicAlbum = publicAlbumSchema.meta({ id: "PublicAlbum" });
+  const publicFeaturedPhoto = publicFeaturedPhotoSchema.meta({
+    id: "PublicFeaturedPhoto",
+  });
+  const publicSiteSetting = publicSiteSettingSchema.meta({
+    id: "PublicSiteSetting",
+  });
 
   registry.registerComponent("securitySchemes", "sessionCookie", {
     type: "apiKey",
@@ -232,6 +240,31 @@ export function buildOpenApiDocument(): OpenApiDocument {
       ...ok(publicAlbum, "专辑详情（含照片 rendition URL）"),
       404: { description: "不存在" },
     },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/share/{shareToken}",
+    summary: "仅链接可见专辑入口（24 位分享 token）",
+    tags: ["public"],
+    request: { params: z.object({ shareToken: z.string() }) },
+    responses: {
+      ...ok(publicAlbum, "专辑详情"),
+      404: { description: "不存在或链接已失效" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/featured",
+    summary: "公开精选（首页展示，照片可来自任意专辑）",
+    tags: ["public"],
+    responses: ok(z.array(publicFeaturedPhoto), "精选照片列表"),
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/settings",
+    summary: "公开站点设置（关于/联系/页头页脚）",
+    tags: ["public"],
+    responses: ok(publicSiteSetting, "站点设置"),
   });
 
   // ---------- photos ----------

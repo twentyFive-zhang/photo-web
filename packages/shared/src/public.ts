@@ -50,3 +50,20 @@ export const publicAlbumSchema = z.object({
   photos: z.array(publicPhotoSchema),
 });
 export type PublicAlbum = z.infer<typeof publicAlbumSchema>;
+
+/** 公开精选照片：附所属专辑用于跳转。 */
+export const publicFeaturedPhotoSchema = publicPhotoSchema.extend({
+  album: z.object({ publicId: z.string(), title: z.string() }),
+});
+export type PublicFeaturedPhoto = z.infer<typeof publicFeaturedPhotoSchema>;
+
+/** 公开站点设置（关于/联系/页头页脚用）；微信二维码已转为完整 URL。 */
+export const publicSiteSettingSchema = z.object({
+  siteName: z.string(),
+  siteDescription: z.string(),
+  about: z.string(),
+  contactEmail: z.string().nullable(),
+  wechatQrUrl: z.string().nullable(),
+  socialLinks: z.array(z.object({ label: z.string(), url: z.string() })),
+});
+export type PublicSiteSetting = z.infer<typeof publicSiteSettingSchema>;

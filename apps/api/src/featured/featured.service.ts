@@ -1,25 +1,46 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import type { FeaturedItem, SetFeaturedInput } from "@photo/shared";
+import type {
+  FeaturedItem,
+  PublicFeaturedPhoto,
+  SetFeaturedInput,
+} from "@photo/shared";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PrismaService } from "../prisma/prisma.service.js";
+// biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
+import { StorageService } from "../storage/storage.service.js";
 
 @Injectable()
 export class FeaturedService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
-  /** 精选列表，按人工排序。 */
+  /** 精选列表，按人工排序。thumbKey 供后台缩略图。 */
   async list(): Promise<FeaturedItem[]> {
     const items = await this.prisma.featuredPhoto.findMany({
       orderBy: { sortOrder: "asc" },
       include: {
-        photo: { select: { id: true, publicId: true, title: true } },
+        photo: {
+          select: {
+            id: true,
+            publicId: true,
+            title: true,
+            renditions: { where: { variant: "THUMB" as const } },
+          },
+        },
       },
     });
     return items.map((item) => ({
       photoId: item.photoId,
       sortOrder: item.sortOrder,
       createdAt: item.createdAt.toISOString(),
-      photo: item.photo,
+      photo: {
+        id: item.photo.id,
+        publicId: item.photo.publicId,
+        title: item.photo.title,
+      },
+      thumbKey: item.photo.renditions[0]?.key ?? null,
     }));
   }
 
@@ -55,5 +76,44 @@ export class FeaturedService {
     await this.prisma.featuredPhoto.delete({ where: { photoId } }).catch(() => {
       throw new NotFoundException("该照片不在精选列表中");
     });
+  }
+
+  /** 公开精选：含 rendition URL 与所属专辑（用于跳转）。 */
+  async listPublic(): Promise<PublicFeaturedPhoto[]> {
+    const items = await this.prisma.featuredPhoto.findMany({
+      orderBy: { sortOrder: "asc" },
+      include: {
+        photo: {
+          include: {
+            renditions: true,
+            tags: { include: { tag: true } },
+            album: { select: { publicId: true, title: true } },
+          },
+        },
+      },
+    });
+
+    return items.map((item) => ({
+      publicId: item.photo.publicId,
+      title: item.photo.title,
+      caption: item.photo.caption,
+      width: item.photo.width,
+      height: item.photo.height,
+      exif: (item.photo.exif as PublicFeaturedPhoto["exif"]) ?? null,
+      sortOrder: item.sortOrder,
+      renditions: item.photo.renditions.map((rendition) => ({
+        variant: rendition.variant,
+        format: rendition.format,
+        width: rendition.width,
+        height: rendition.height,
+        bytes: rendition.bytes,
+        url: this.storage.publicUrl(rendition.key),
+      })),
+      tags: item.photo.tags.map(({ tag }) => ({ id: tag.id, name: tag.name })),
+      album: {
+        publicId: item.photo.album.publicId,
+        title: item.photo.album.title,
+      },
+    }));
   }
 }
