@@ -94,7 +94,7 @@ async function AlbumContent({
         {album.photos.length === 0 ? (
           <p className="text-neutral-500">这个专辑还没有照片。</p>
         ) : (
-          <PhotoGallery photos={album.photos} />
+          <PhotoGallery albumPublicId={album.publicId} photos={album.photos} />
         )}
       </div>
     </>

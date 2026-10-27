@@ -3,29 +3,15 @@
 import type { PublicPhoto } from "@photo/shared";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { exifLine, renditionUrl } from "@/lib/photo";
 
-function renditionUrl(
-  photo: PublicPhoto,
-  variant: "THUMB" | "DISPLAY" | "LARGE",
-): string | null {
-  return photo.renditions.find((r) => r.variant === variant)?.url ?? null;
-}
-
-function exifLine(photo: PublicPhoto): string | null {
-  const exif = photo.exif as Record<string, unknown> | null;
-  if (!exif) return null;
-  const parts = [
-    exif.camera,
-    exif.lens,
-    exif.focalLength,
-    exif.aperture,
-    exif.shutter,
-    typeof exif.iso === "number" ? `ISO ${exif.iso}` : null,
-  ].filter((part): part is string => typeof part === "string" && part !== "");
-  return parts.join(" · ") || null;
-}
-
-export function PhotoGallery({ photos }: { photos: PublicPhoto[] }) {
+export function PhotoGallery({
+  albumPublicId,
+  photos,
+}: {
+  albumPublicId: string;
+  photos: PublicPhoto[];
+}) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   const close = useCallback(() => setSelectedIndex(null), []);
@@ -64,10 +50,14 @@ export function PhotoGallery({ photos }: { photos: PublicPhoto[] }) {
           const thumb = renditionUrl(photo, "THUMB");
           return (
             <li key={photo.publicId}>
-              <button
+              {/* 原生链接直达照片页（无 JS 也能用）；JS 正常时拦截为灯箱 */}
+              <a
                 className="block w-full overflow-hidden rounded-xl bg-neutral-900"
-                onClick={() => setSelectedIndex(index)}
-                type="button"
+                href={`/albums/${albumPublicId}/photos/${photo.publicId}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  setSelectedIndex(index);
+                }}
               >
                 {thumb && (
                   // biome-ignore lint/performance/noImgElement: 图 URL 来自 API rendition（本地 /media），不走 next/image 优化
@@ -78,7 +68,7 @@ export function PhotoGallery({ photos }: { photos: PublicPhoto[] }) {
                     src={thumb}
                   />
                 )}
-              </button>
+              </a>
             </li>
           );
         })}
