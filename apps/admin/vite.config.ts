@@ -4,6 +4,8 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   base: "/admin/",
+  // 读取仓库根目录的 .env（VITE_PUBLIC_BASE_URL 等客户端可见变量）
+  envDir: "../..",
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,

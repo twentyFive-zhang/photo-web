@@ -9,6 +9,7 @@ import {
   useFeaturedIds,
   useInvalidateAlbum,
 } from "../../lib/shell.js";
+import { QrDialog } from "./qr-dialog.jsx";
 
 function thumbUrl(photo: AlbumPhotoRow): string | null {
   const thumb = photo.renditions.find((r) => r.variant === "THUMB");
@@ -30,6 +31,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<AlbumPhotoRow | null>(null);
+  const [showQr, setShowQr] = useState(false);
 
   const invalidate = useInvalidateAlbum(albumId);
 
@@ -193,22 +195,31 @@ function AlbumDetail({ albumId }: { albumId: string }) {
           )}
         </div>
         {album && (
-          <button
-            className={
-              album.visibility === "PUBLIC"
-                ? "rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
-                : "rounded-full bg-white px-4 py-2 text-sm font-medium text-black"
-            }
-            disabled={visibilityMutation.isPending}
-            onClick={() =>
-              visibilityMutation.mutate(
-                album.visibility === "PUBLIC" ? "UNLISTED" : "PUBLIC",
-              )
-            }
-            type="button"
-          >
-            {album.visibility === "PUBLIC" ? "取消公开" : "发布（公开）"}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
+              onClick={() => setShowQr(true)}
+              type="button"
+            >
+              二维码
+            </button>
+            <button
+              className={
+                album.visibility === "PUBLIC"
+                  ? "rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
+                  : "rounded-full bg-white px-4 py-2 text-sm font-medium text-black"
+              }
+              disabled={visibilityMutation.isPending}
+              onClick={() =>
+                visibilityMutation.mutate(
+                  album.visibility === "PUBLIC" ? "UNLISTED" : "PUBLIC",
+                )
+              }
+              type="button"
+            >
+              {album.visibility === "PUBLIC" ? "取消公开" : "发布（公开）"}
+            </button>
+          </div>
         )}
       </div>
 
@@ -275,6 +286,11 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         )}
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
+
+      {/* 专辑二维码弹窗（公开链接 + 分享链接） */}
+      {showQr && album && (
+        <QrDialog album={album} onClose={() => setShowQr(false)} />
+      )}
 
       {/* 照片编辑面板 */}
       {editing && (
