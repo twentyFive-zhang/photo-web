@@ -1,7 +1,9 @@
 import type { FeaturedItem } from "@photo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { ChevronDown, ChevronUp, Star, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { apiFetch, mediaUrl } from "../../lib/api.js";
 import { AdminShell } from "../../lib/shell.js";
 
@@ -22,7 +24,10 @@ function FeaturedList() {
     queryFn: () => apiFetch<FeaturedItem[]>("/admin/featured"),
   });
 
-  const fail = (err: Error) => setError(err.message);
+  const fail = (err: Error) => {
+    setError(err.message);
+    toast.error(err.message);
+  };
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["featured"] });
@@ -34,14 +39,20 @@ function FeaturedList() {
         method: "PUT",
         body: JSON.stringify({ photoIds }),
       }),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      toast.success("精选排序已保存");
+      invalidate();
+    },
     onError: fail,
   });
 
   const removeMutation = useMutation({
     mutationFn: (photoId: string) =>
       apiFetch(`/admin/featured/${photoId}`, { method: "DELETE" }),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      toast.success("已移出精选");
+      invalidate();
+    },
     onError: fail,
   });
 
@@ -58,7 +69,10 @@ function FeaturedList() {
   return (
     <main className="mx-auto min-h-screen max-w-4xl space-y-6 p-4 sm:p-8">
       <div className="space-y-1">
-        <h1 className="text-2xl font-medium">精选</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-medium">
+          <Star size={22} />
+          精选
+        </h1>
         <p className="text-sm text-neutral-500">
           顺序即前台展示顺序；在专辑页把照片"入精选"后在这里重排。
         </p>
@@ -97,28 +111,31 @@ function FeaturedList() {
               </p>
             </div>
             <button
-              className="rounded border border-neutral-700 px-2 py-1 text-xs hover:border-neutral-400 disabled:opacity-40"
+              aria-label="上移"
+              className="rounded border border-neutral-700 p-1.5 hover:border-neutral-400 disabled:opacity-40"
               disabled={index === 0}
               onClick={() => move(index, -1)}
               type="button"
             >
-              ↑
+              <ChevronUp size={12} />
             </button>
             <button
-              className="rounded border border-neutral-700 px-2 py-1 text-xs hover:border-neutral-400 disabled:opacity-40"
+              aria-label="下移"
+              className="rounded border border-neutral-700 p-1.5 hover:border-neutral-400 disabled:opacity-40"
               disabled={index === items.length - 1}
               onClick={() => move(index, 1)}
               type="button"
             >
-              ↓
+              <ChevronDown size={12} />
             </button>
             <button
-              className="rounded border border-red-900 px-2 py-1 text-xs text-red-300 hover:border-red-500"
+              aria-label="移出精选"
+              className="rounded border border-red-900 p-1.5 text-red-300 hover:border-red-500"
               disabled={removeMutation.isPending}
               onClick={() => removeMutation.mutate(item.photoId)}
               type="button"
             >
-              移除
+              <Trash2 size={12} />
             </button>
           </li>
         ))}

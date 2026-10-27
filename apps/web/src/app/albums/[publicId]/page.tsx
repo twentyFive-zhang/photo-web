@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { fetchApi } from "@/lib/fetch-api";
+import { CopyLinkButton } from "./copy-link-button";
 import { PhotoGallery } from "./photo-gallery";
 
 type PageProps = { params: Promise<{ publicId: string }> };
@@ -85,6 +86,9 @@ async function AlbumContent({
       {album.description && (
         <p className="max-w-2xl text-neutral-400">{album.description}</p>
       )}
+      <div>
+        <CopyLinkButton />
+      </div>
 
       <div className="pt-4">
         {album.photos.length === 0 ? (

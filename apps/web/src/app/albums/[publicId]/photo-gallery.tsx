@@ -1,6 +1,7 @@
 "use client";
 
 import type { PublicPhoto } from "@photo/shared";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 function renditionUrl(
@@ -96,25 +97,25 @@ export function PhotoGallery({ photos }: { photos: PublicPhoto[] }) {
             </span>
             <button
               aria-label="关闭"
-              className="rounded-full border border-neutral-700 px-3 py-1 text-sm hover:border-neutral-400"
+              className="rounded-full border border-neutral-700 p-2 hover:border-neutral-400"
               onClick={close}
               type="button"
             >
-              关闭 (Esc)
+              <X size={15} />
             </button>
           </header>
 
           <div className="relative flex flex-1 items-center justify-center px-4 pb-6">
             <button
               aria-label="上一张"
-              className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full border border-neutral-700 px-3 py-2 text-neutral-300 hover:border-neutral-400"
+              className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full border border-neutral-700 p-2 text-neutral-300 hover:border-neutral-400"
               onClick={(event) => {
                 event.stopPropagation();
                 prev();
               }}
               type="button"
             >
-              ←
+              <ChevronLeft size={16} />
             </button>
             {(() => {
               const large = renditionUrl(selected, "LARGE");
@@ -132,14 +133,14 @@ export function PhotoGallery({ photos }: { photos: PublicPhoto[] }) {
             })()}
             <button
               aria-label="下一张"
-              className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full border border-neutral-700 px-3 py-2 text-neutral-300 hover:border-neutral-400"
+              className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full border border-neutral-700 p-2 text-neutral-300 hover:border-neutral-400"
               onClick={(event) => {
                 event.stopPropagation();
                 next();
               }}
               type="button"
             >
-              →
+              <ChevronRight size={16} />
             </button>
           </div>
 

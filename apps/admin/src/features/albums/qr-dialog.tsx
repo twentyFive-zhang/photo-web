@@ -1,6 +1,9 @@
 import type { Album } from "@photo/shared";
+import { Copy, Download, X } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import { copyText } from "../../lib/clipboard.js";
 
 /**
  * 二维码里用的前台地址：
@@ -14,15 +17,6 @@ function webBaseUrl(): string {
     return configured.replace(/\/+$/, "");
   }
   return `http://${window.location.hostname}:3000`;
-}
-
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function downloadDataUrl(dataUrl: string, filename: string) {
@@ -83,23 +77,28 @@ function QrCard({
       <p className="text-xs break-all text-neutral-500">{url}</p>
       <div className="flex justify-center gap-2">
         <button
-          className="rounded-full border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-400"
+          className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-400"
           onClick={async () => {
             if (await copyText(url)) {
               setCopied(true);
+              toast.success("链接已复制");
               setTimeout(() => setCopied(false), 1500);
+            } else {
+              toast.error("复制失败，请手动长按链接复制");
             }
           }}
           type="button"
         >
+          <Copy size={12} />
           {copied ? "已复制" : "复制链接"}
         </button>
         <button
-          className="rounded-full border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-400 disabled:opacity-40"
+          className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-400 disabled:opacity-40"
           disabled={!dataUrl}
           onClick={() => dataUrl && downloadDataUrl(dataUrl, filename)}
           type="button"
         >
+          <Download size={12} />
           下载 PNG
         </button>
       </div>
@@ -131,11 +130,12 @@ export function QrDialog({
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">专辑二维码</h2>
           <button
-            className="text-sm text-neutral-500 hover:text-white"
+            aria-label="关闭"
+            className="rounded-full border border-neutral-700 p-1.5 text-neutral-400 hover:border-neutral-400 hover:text-white"
             onClick={onClose}
             type="button"
           >
-            关闭
+            <X size={14} />
           </button>
         </div>
         <p className="text-xs text-neutral-500">
@@ -177,11 +177,12 @@ export function AdminQrDialog({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">手机管理</h2>
           <button
-            className="text-sm text-neutral-500 hover:text-white"
+            aria-label="关闭"
+            className="rounded-full border border-neutral-700 p-1.5 text-neutral-400 hover:border-neutral-400 hover:text-white"
             onClick={onClose}
             type="button"
           >
-            关闭
+            <X size={14} />
           </button>
         </div>
         <QrCard

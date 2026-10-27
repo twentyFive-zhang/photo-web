@@ -1,6 +1,8 @@
 import type { SiteSetting } from "@photo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, QrCode, Settings as SettingsIcon, Trash2 } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { toast } from "sonner";
 import { apiFetch, mediaUrl } from "../../lib/api.js";
 import { AdminShell } from "../../lib/shell.js";
 
@@ -40,10 +42,14 @@ function SettingsForm() {
       }),
     onSuccess: () => {
       setSaved(true);
+      toast.success("站点设置已保存");
       setTimeout(() => setSaved(false), 2000);
       queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      setError(err.message);
+      toast.error(err.message);
+    },
   });
 
   const qrMutation = useMutation({
@@ -55,8 +61,14 @@ function SettingsForm() {
         body: form,
       });
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
-    onError: (err) => setError(err.message),
+    onSuccess: () => {
+      toast.success("微信二维码已更新");
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
+    },
+    onError: (err) => {
+      setError(err.message);
+      toast.error(err.message);
+    },
   });
 
   if (settingsQuery.isPending) {
@@ -67,7 +79,10 @@ function SettingsForm() {
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl space-y-8 p-4 sm:p-8">
-      <h1 className="text-2xl font-medium">站点设置</h1>
+      <h1 className="flex items-center gap-2 text-2xl font-medium">
+        <SettingsIcon size={22} />
+        站点设置
+      </h1>
       {error && <p className="text-sm text-red-400">{error}</p>}
 
       <BasicSection
@@ -206,7 +221,8 @@ function SocialLinksSection({
             value={link.url}
           />
           <button
-            className="rounded-lg border border-neutral-700 px-3 text-sm text-neutral-400 hover:border-neutral-400"
+            aria-label="删除此链接"
+            className="rounded-lg border border-neutral-700 p-2 text-neutral-400 hover:border-neutral-400"
             onClick={() =>
               setLinks((current) =>
                 current.filter((item) => item.key !== link.key),
@@ -214,13 +230,13 @@ function SocialLinksSection({
             }
             type="button"
           >
-            删除
+            <Trash2 size={14} />
           </button>
         </div>
       ))}
       <div className="flex gap-3">
         <button
-          className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
+          className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
           onClick={() =>
             setLinks((current) => [
               ...current,
@@ -229,6 +245,7 @@ function SocialLinksSection({
           }
           type="button"
         >
+          <Plus size={15} />
           添加一条
         </button>
         <SaveButton />
@@ -248,7 +265,10 @@ function QrSection({
 }) {
   return (
     <section className="space-y-4 rounded-2xl border border-neutral-800 p-5">
-      <h2 className="text-sm font-medium text-neutral-300">微信二维码</h2>
+      <h2 className="flex items-center gap-1.5 text-sm font-medium text-neutral-300">
+        <QrCode size={15} />
+        微信二维码
+      </h2>
       <div className="flex items-center gap-4">
         {qrUrl ? (
           // biome-ignore lint/performance/noImgElement: 二维码走本地 /media，不走 next/image 优化

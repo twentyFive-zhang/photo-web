@@ -1,7 +1,9 @@
 import type { Album } from "@photo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { FolderOpen, Plus } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { toast } from "sonner";
 import { apiFetch } from "../../lib/api.js";
 import { AdminShell } from "../../lib/shell.js";
 
@@ -21,11 +23,15 @@ export function AlbumsPage() {
         method: "POST",
         body: JSON.stringify(input),
       }),
-    onSuccess: () => {
+    onSuccess: (album) => {
       setTitle("");
+      toast.success(`专辑「${album.title}」已创建`);
       queryClient.invalidateQueries({ queryKey: ["albums"] });
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      setError(err.message);
+      toast.error(err.message);
+    },
   });
 
   function handleCreate(event: FormEvent) {
@@ -37,7 +43,10 @@ export function AlbumsPage() {
   return (
     <AdminShell>
       <main className="mx-auto min-h-screen max-w-4xl space-y-8 p-4 sm:p-8">
-        <h1 className="text-2xl font-medium">专辑</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-medium">
+          <FolderOpen size={22} />
+          专辑
+        </h1>
 
         <form className="flex gap-2" onSubmit={handleCreate}>
           <input
@@ -48,14 +57,18 @@ export function AlbumsPage() {
             value={title}
           />
           <button
-            className="rounded-full bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
             disabled={createMutation.isPending}
             type="submit"
           >
+            <Plus size={15} />
             创建
           </button>
         </form>
         {error && <p className="text-sm text-red-400">{error}</p>}
+        {createMutation.isError && (
+          <p className="text-sm text-red-400">{createMutation.error.message}</p>
+        )}
 
         {albumsQuery.isPending && <p className="text-neutral-400">加载中…</p>}
         {albumsQuery.data?.length === 0 && (

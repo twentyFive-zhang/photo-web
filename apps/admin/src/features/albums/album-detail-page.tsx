@@ -1,7 +1,22 @@
 import type { Album } from "@photo/shared";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
+import {
+  ChevronDown,
+  ChevronUp,
+  Crown,
+  EyeOff,
+  Globe,
+  ImagePlus,
+  Pencil,
+  QrCode,
+  Star,
+  Trash2,
+  X,
+} from "lucide-react";
 import { type ChangeEvent, type FormEvent, useRef, useState } from "react";
+import { toast } from "sonner";
+import { PhotoLightbox } from "../../components/photo-lightbox.jsx";
 import { apiFetch, mediaUrl } from "../../lib/api.js";
 import {
   AdminShell,
@@ -32,6 +47,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<AlbumPhotoRow | null>(null);
   const [showQr, setShowQr] = useState(false);
+  const [viewing, setViewing] = useState<number | null>(null);
 
   const invalidate = useInvalidateAlbum(albumId);
 
@@ -52,7 +68,10 @@ function AlbumDetail({ albumId }: { albumId: string }) {
 
   const featuredIds = useFeaturedIds();
 
-  const fail = (err: Error) => setError(err.message);
+  const fail = (err: Error) => {
+    setError(err.message);
+    toast.error(err.message);
+  };
 
   const uploadMutation = useMutation({
     mutationFn: async (files: File[]) => {
@@ -64,15 +83,22 @@ function AlbumDetail({ albumId }: { albumId: string }) {
           body: form,
         });
       }
+      return files.length;
     },
-    onSuccess: invalidate,
+    onSuccess: (count) => {
+      toast.success(`已上传 ${count} 张照片`);
+      invalidate();
+    },
     onError: fail,
   });
 
   const deleteMutation = useMutation({
     mutationFn: (photoId: string) =>
       apiFetch<void>(`/admin/photos/${photoId}`, { method: "DELETE" }),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      toast.success("照片已删除");
+      invalidate();
+    },
     onError: fail,
   });
 
@@ -82,7 +108,8 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         method: "POST",
         body: JSON.stringify({ photoIds }),
       }),
-    onSuccess: () => {
+    onSuccess: ({ deleted }) => {
+      toast.success(`已删除 ${deleted} 张照片`);
       setSelected(new Set());
       invalidate();
     },
@@ -95,7 +122,8 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         method: "POST",
         body: JSON.stringify({ photoIds: [...selected], targetAlbumId }),
       }),
-    onSuccess: () => {
+    onSuccess: ({ moved }) => {
+      toast.success(`已移动 ${moved} 张照片`);
       setSelected(new Set());
       invalidate();
     },
@@ -108,7 +136,10 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         method: "POST",
         body: JSON.stringify({ photoIds }),
       }),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      toast.success("排序已保存");
+      invalidate();
+    },
     onError: fail,
   });
 
@@ -118,7 +149,10 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         method: "PATCH",
         body: JSON.stringify({ coverPhotoId }),
       }),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      toast.success("封面已设置");
+      invalidate();
+    },
     onError: fail,
   });
 
@@ -128,7 +162,12 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         method: "PATCH",
         body: JSON.stringify({ visibility }),
       }),
-    onSuccess: invalidate,
+    onSuccess: (album) => {
+      toast.success(
+        album.visibility === "PUBLIC" ? "专辑已公开" : "专辑已设为仅链接可见",
+      );
+      invalidate();
+    },
     onError: fail,
   });
 
@@ -138,11 +177,24 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         method: "PUT",
         body: JSON.stringify({ photoIds: [...featuredIds, photoId] }),
       }),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      toast.success("已加入精选");
+      invalidate();
+    },
     onError: fail,
   });
 
   const photos = photosQuery.data ?? [];
+
+  /** 灯箱数据：LARGE 原大图（无则 null，点击时跳过打开）。 */
+  const lightboxPhotos = photos.map((photo) => {
+    const large = photo.renditions.find((r) => r.variant === "LARGE");
+    return {
+      url: large ? mediaUrl(large.key) : null,
+      title: photo.title,
+      caption: photo.caption,
+    };
+  });
 
   function move(photoId: string, delta: -1 | 1) {
     const index = photos.findIndex((photo) => photo.id === photoId);
@@ -197,17 +249,18 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         {album && (
           <div className="flex shrink-0 items-center gap-2">
             <button
-              className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
+              className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
               onClick={() => setShowQr(true)}
               type="button"
             >
+              <QrCode size={15} />
               二维码
             </button>
             <button
               className={
                 album.visibility === "PUBLIC"
-                  ? "rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
-                  : "rounded-full bg-white px-4 py-2 text-sm font-medium text-black"
+                  ? "flex items-center gap-1.5 rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
+                  : "flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-medium text-black"
               }
               disabled={visibilityMutation.isPending}
               onClick={() =>
@@ -217,7 +270,17 @@ function AlbumDetail({ albumId }: { albumId: string }) {
               }
               type="button"
             >
-              {album.visibility === "PUBLIC" ? "取消公开" : "发布（公开）"}
+              {album.visibility === "PUBLIC" ? (
+                <>
+                  <EyeOff size={15} />
+                  取消公开
+                </>
+              ) : (
+                <>
+                  <Globe size={15} />
+                  发布（公开）
+                </>
+              )}
             </button>
           </div>
         )}
@@ -225,7 +288,8 @@ function AlbumDetail({ albumId }: { albumId: string }) {
 
       {/* 上传 + 批量操作工具栏 */}
       <div className="flex flex-wrap items-center gap-3">
-        <label className="cursor-pointer rounded-full border border-dashed border-neutral-600 px-5 py-2.5 text-sm text-neutral-300 hover:border-neutral-400">
+        <label className="flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-neutral-600 px-5 py-2.5 text-sm text-neutral-300 hover:border-neutral-400">
+          <ImagePlus size={15} />
           {uploadMutation.isPending ? "上传中…" : "上传照片"}
           <input
             accept="image/jpeg,image/png,image/webp"
@@ -264,7 +328,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
                 ))}
             </select>
             <button
-              className="rounded-full border border-red-900 px-4 py-2 text-sm text-red-300 hover:border-red-500"
+              className="flex items-center gap-1.5 rounded-full border border-red-900 px-4 py-2 text-sm text-red-300 hover:border-red-500"
               disabled={batchDeleteMutation.isPending}
               onClick={() => {
                 if (confirm(`确定删除选中的 ${selected.size} 张照片？`)) {
@@ -273,13 +337,15 @@ function AlbumDetail({ albumId }: { albumId: string }) {
               }}
               type="button"
             >
+              <Trash2 size={15} />
               批量删除
             </button>
             <button
-              className="text-sm text-neutral-500 hover:text-white"
+              className="flex items-center gap-1 text-sm text-neutral-500 hover:text-white"
               onClick={() => setSelected(new Set())}
               type="button"
             >
+              <X size={14} />
               清除选择
             </button>
           </>
@@ -290,6 +356,16 @@ function AlbumDetail({ albumId }: { albumId: string }) {
       {/* 专辑二维码弹窗（公开链接 + 分享链接） */}
       {showQr && album && (
         <QrDialog album={album} onClose={() => setShowQr(false)} />
+      )}
+
+      {/* 大图灯箱 */}
+      {viewing !== null && (
+        <PhotoLightbox
+          index={viewing}
+          photos={lightboxPhotos}
+          onClose={() => setViewing(null)}
+          onNavigate={setViewing}
+        />
       )}
 
       {/* 照片编辑面板 */}
@@ -323,12 +399,20 @@ function AlbumDetail({ albumId }: { albumId: string }) {
               key={photo.id}
             >
               {url ? (
-                // biome-ignore lint/performance/noImgElement: 图 URL 来自 API rendition（本地 /media），不走 next/image 优化
-                <img
-                  alt={photo.title ?? "照片"}
-                  className="aspect-square w-full object-cover"
-                  src={url}
-                />
+                <button
+                  className="block w-full cursor-zoom-in"
+                  onClick={() => {
+                    if (lightboxPhotos[index].url) setViewing(index);
+                  }}
+                  type="button"
+                >
+                  {/* biome-ignore lint/performance/noImgElement: 图 URL 来自 API rendition（本地 /media），不走 next/image 优化 */}
+                  <img
+                    alt={photo.title ?? "照片"}
+                    className="aspect-square w-full object-cover"
+                    src={url}
+                  />
+                </button>
               ) : (
                 <div className="flex aspect-square items-center justify-center text-neutral-600">
                   无预览
@@ -354,31 +438,33 @@ function AlbumDetail({ albumId }: { albumId: string }) {
               {/* 操作按钮：手机无常显 hover，小屏直接展示 */}
               <div className="absolute inset-x-0 bottom-0 flex flex-wrap gap-1 bg-black/70 p-2 sm:hidden sm:group-hover:flex">
                 <SmallButton
+                  aria-label="上移"
                   disabled={index === 0}
                   onClick={() => move(photo.id, -1)}
                 >
-                  ↑
+                  <ChevronUp size={12} />
                 </SmallButton>
                 <SmallButton
+                  aria-label="下移"
                   disabled={index === photos.length - 1}
                   onClick={() => move(photo.id, 1)}
                 >
-                  ↓
+                  <ChevronDown size={12} />
                 </SmallButton>
                 <SmallButton onClick={() => setEditing(photo)}>
-                  编辑
+                  <Pencil size={12} aria-label="编辑" />
                 </SmallButton>
                 <SmallButton
                   disabled={isCover}
                   onClick={() => coverMutation.mutate(photo.id)}
                 >
-                  设封面
+                  <Crown size={12} aria-label="设封面" />
                 </SmallButton>
                 <SmallButton
                   disabled={featuredIds.has(photo.id)}
                   onClick={() => addFeaturedMutation.mutate(photo.id)}
                 >
-                  {featuredIds.has(photo.id) ? "已精选" : "入精选"}
+                  <Star size={12} aria-label="入精选" />
                 </SmallButton>
                 <SmallButton
                   disabled={deleteMutation.isPending}
@@ -388,7 +474,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
                     }
                   }}
                 >
-                  删除
+                  <Trash2 size={12} aria-label="删除" />
                 </SmallButton>
               </div>
             </li>
@@ -460,8 +546,14 @@ function PhotoEditPanel({
       }),
       tagsMutation.mutateAsync(names),
     ])
-      .then(onSaved)
-      .catch(() => setError("保存失败，请重试"));
+      .then(() => {
+        toast.success("照片已保存");
+        onSaved();
+      })
+      .catch(() => {
+        setError("保存失败，请重试");
+        toast.error("保存失败，请重试");
+      });
   }
 
   return (

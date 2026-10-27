@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { FolderOpen, LogOut, Settings, Smartphone, Star } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { AdminQrDialog } from "../features/albums/qr-dialog.jsx";
 import { apiFetch } from "./api.js";
@@ -27,38 +28,43 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-8 sm:py-4">
           <nav className="flex gap-4 sm:gap-6">
             <Link
-              className="text-sm text-neutral-300 hover:text-white"
+              className="flex items-center gap-1.5 text-sm text-neutral-300 hover:text-white"
               to="/albums"
             >
+              <FolderOpen size={15} />
               专辑
             </Link>
             <Link
-              className="text-sm text-neutral-400 hover:text-white"
+              className="flex items-center gap-1.5 text-sm text-neutral-400 hover:text-white"
               to="/featured"
             >
+              <Star size={15} />
               精选
             </Link>
             <Link
-              className="text-sm text-neutral-400 hover:text-white"
+              className="flex items-center gap-1.5 text-sm text-neutral-400 hover:text-white"
               to="/settings"
             >
+              <Settings size={15} />
               站点设置
             </Link>
           </nav>
           <div className="flex items-center gap-4">
             <button
-              className="text-sm text-neutral-400 hover:text-white"
+              className="flex items-center gap-1.5 text-sm text-neutral-400 hover:text-white"
               onClick={() => setShowPhoneQr(true)}
               type="button"
             >
+              <Smartphone size={15} />
               手机管理
             </button>
             <button
-              className="text-sm text-neutral-500 hover:text-white"
+              className="flex items-center gap-1.5 text-sm text-neutral-500 hover:text-white"
               disabled={logout.isPending}
               onClick={() => logout.mutate()}
               type="button"
             >
+              <LogOut size={15} />
               退出登录
             </button>
           </div>

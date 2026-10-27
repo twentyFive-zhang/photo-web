@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { Toaster } from "sonner";
 import { AlbumDetailPage } from "./features/albums/album-detail-page.js";
 import { AlbumsPage } from "./features/albums/albums-page.js";
 import { LoginPage, RequireAuth } from "./features/auth/login-page.js";
@@ -103,6 +104,8 @@ createRoot(rootElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
+      {/* 接口操作的成功/失败提示；移动端居中更易看到 */}
+      <Toaster position="bottom-center" />
     </QueryClientProvider>
   </StrictMode>,
 );
