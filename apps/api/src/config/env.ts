@@ -32,7 +32,8 @@ const envSchema = z.object({
   COS_SECRET_KEY: z.string().optional(),
   COS_BUCKET: z.string().optional(),
   COS_REGION: z.string().optional(),
-  CDN_BASE_URL: z.url().default("http://localhost:3001/media"),
+  // 相对路径 = 同源 /media（dev 由 web/admin 代理到 API）；生产配 CDN 绝对地址
+  CDN_BASE_URL: z.string().default("/media"),
   // 本地磁盘存储根目录（相对 API 进程 cwd）；生产 COS 部署后仅作上传暂存
   STORAGE_DIR: z.string().default("var/storage"),
 });
