@@ -9,7 +9,7 @@
     "packages/*"
   ],
   "catalog": {
-    "@biomejs/biome": "2.4.2",
+    "@biomejs/biome": "2.6.3",
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
@@ -34,7 +34,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",
-    "concurrently": "^9.2.1",
+    "concurrently": "10.0.6",
     "typescript": "catalog:"
   },
   "engines": {
