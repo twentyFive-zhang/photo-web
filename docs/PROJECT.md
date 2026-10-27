@@ -108,6 +108,7 @@
 ### 已知限制与取舍
 
 - **Prisma 固定 6.19.3**：Prisma 7+ 需要 `prisma.config.ts` + driver adapter，后续单独迁移。
+- **TypeScript 统一 6.0.3，TS 7 延后**：TS 7.0 无 JS 编译器 API，`nest build` 不兼容（见 ADR 0002）；等 TS 7.1 stable + nest-cli 适配后单独立项。
 - **Docker Hub 当前网络不可达**：本地镜像从 DaoCloud 公开镜像源拉取后打了标准 tag；换机器需配镜像加速或改 compose 的 image 地址。
 - **TanStack Router 目前是 code-based**：要 file-based 再换。
 - **shadcn/ui 只装基础依赖**：组件还没铺。
