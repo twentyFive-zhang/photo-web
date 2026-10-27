@@ -10,7 +10,6 @@ coverage/
 apps/*/.env
 apps/*/.env.*
 !apps/*/.env.example
-storage/
 apps/api/var/
 .DS_Store
 *.log
