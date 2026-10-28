@@ -1,8 +1,8 @@
 # photo-web 项目上下文
 
-> 最后更新：2026-10-27
+> 最后更新：2026-10-28
 > 基线提交：`e1324a2 chore: scaffold photo-web monorepo`
-> 当前阶段：里程碑 1 已完成，准备进入里程碑 2
+> 当前阶段：M1-M4 完成；M4 后体验增强（二维码/手机端/UX）完成；准备进入 M5
 
 ## 1. 项目目标
 
@@ -83,9 +83,11 @@
 - 代码仓库/CI 计划：GitHub + GitHub Actions + 腾讯云 TCR + SSH；尚未配置 remote/CI。
 - 工具链：Biome；第一版不引入测试框架；Vitest/Playwright 以后再加。
 
-## 4. 里程碑 1 状态（已完成）
+## 4. 里程碑状态
 
-### 已实现
+### M1（已完成）
+
+#### 已实现
 
 - Bun workspace：`apps/web`、`apps/admin`、`apps/api`、`packages/shared`。
 - Next.js 前台骨架：首页占位、metadata/OG、Tailwind。
@@ -96,7 +98,7 @@
 - 本地 Postgres/Redis Docker Compose；`.env.example`。
 - `GLOSSARY.md`；ADR 0001（百度网盘只做导入源）。
 
-### 验证
+#### 验证
 
 - `bun run lint` 通过。
 - `bun run build` 通过（shared / web / admin / api）。
@@ -114,11 +116,34 @@
 - **shadcn/ui 只装基础依赖**：组件还没铺。
 - **Next.js 16 Cache Components 已开启**：未缓存数据必须放在 `<Suspense>` 边界内，`params` promise 传入边界组件后再 await；`await connection()` 单用不够（已踩过）。
 - **流式渲染下 404 状态码**：专辑详情页 notFound() 在 Suspense 边界内触发时 HTTP 状态为 200，仅内容为 404 页（PPR 流式固有行为；SEO 影响待 M4 评估）。
+- **流式内容依赖客户端脚本**：Cache Components 下 Suspense 内内容经 RSC 流注入，浏览器 JS 未执行时只见 fallback（照片网格、灯箱等均受影响）。关键浏览路径已用原生链接/独立页面兜底（照片详情页）。
 - **HEIC 上传未支持**：Q12 要求的 HEIC→JPEG 转换留到后续里程碑；当前仅收 JPEG/PNG/WebP。
 - 百度开放平台应用未申请；百度导入未实现。
 - 小程序二期未开始。
 - 没有测试框架；没有 remote/CI；没有部署。
 - 本地测试 admin 密码不写入文档；以 `.env` 的 `ADMIN_PASSWORD` 为准。
+
+### M2-M4（已完成，2026-10-27）
+
+M2 认证 + 内容 CRUD、M3 上传 + 展示纵向切片、M4 后台完整 + 前台完整。详见第 6 节里程碑规划表与对应提交（`ee4c7ce` / `72c865a` / `904b33b`）。
+
+### M4 后体验增强（已完成，2026-10-28，提交 `b121caf`..`e88b790`）
+
+后台（`b121caf` / `ddbcabc` / `ac3c5a8`）：
+
+- 专辑"二维码"弹窗：公开链接 + `/s/:shareToken` 分享链接双码，前端 `qrcode` 库生成，可复制链接（含非安全上下文 `execCommand` 降级）、下载 512px PNG；URL 为可点击链接（新标签打开）
+- "手机管理"入口：顶部导航弹出后台地址二维码；Vite `host: true` 暴露局域网
+- 域名解析：`VITE_PUBLIC_BASE_URL` / `VITE_PUBLIC_ADMIN_BASE_URL`（admin 端 `envDir` 读根 `.env`），未设置时回退 `http://{当前hostname}:{3000|5173}`
+- sonner toast：全部内容操作成功/失败提示（失败保留行内红字）
+- 后台照片灯箱：点击缩略图看 LARGE 大图，键盘/按钮翻页
+- lucide 图标全站铺开；手机端适配（操作按钮小屏常显、内边距/导航响应式）
+
+前台（`63e9b03` / `ac3c5a8` / `e88b790`）：
+
+- **媒体 URL 相对化**：`CDN_BASE_URL` 默认 `/media`，web 用 next rewrites、admin 用 Vite proxy 同源代理——手机/局域网访问图片正常；生产（M6）配 CDN 绝对地址
+- 照片详情页 `/albums/:publicId/photos/:photoPublicId`：服务端渲染大图 + 上一张/下一张（循环）+ EXIF，独立 OG 卡片
+- 缩略图为原生链接指向照片页（客户端 JS 失效时仍可整页跳转浏览），JS 正常时拦截为灯箱（键盘/按钮翻页）
+- 专辑页"复制链接"分享按钮 + toast；灯箱控制图标化
 
 ## 5. 仓库结构与命令
 
@@ -163,6 +188,7 @@ bun run dev
 | **M2 认证 + 内容 CRUD** ✅        | 登录/me/改密、专辑/照片/标签/精选/站点设置 CRUD、`publicId`/`shareToken`/`visibility`、排序/批量移动/删除、封面 | Swagger 里能 curl 全套接口，seed 出可见数据 |
 | **M3 上传 + 展示（纵向切片）** ✅ | 最小本地上传（原件 + 三档 WebP + EXIF）→ 最小前台（专辑详情 + 灯箱）                                            | 从后台上传一张照片，前台能打开看到          |
 | **M4 后台完整 + 前台完整** ✅     | 排序/批量操作/封面/精选排序、首页/列表页/关于/联系页/SEO/OG、`/s/:shareToken`                                   | 站点达到"能用版本"                          |
+| **M4.5 体验增强** ✅              | 专辑/手机管理二维码、媒体相对 URL、照片详情页、toast、灯箱、lucide 图标、手机端适配（2026-10-28）               | 手机扫码全流程可用                          |
 | **M5 百度网盘导入**               | OAuth、目录浏览、BullMQ job、进度/重试                                                                          | 从网盘导入一个文件夹成功，失败可重试        |
 | **M6 部署上线**                   | Caddy、生产 Compose、COS/CDN、ICP、备份、监控、GitHub remote + CI                                               | jiangliuer.com 可访问                       |
 | **M7 小程序**（二期）             | Taro 只读浏览                                                                                                   | —                                           |
@@ -194,7 +220,7 @@ remote 配好前不引入任务工具，用本文件 + conventional commit 前�
 1. 读 `docs/PROJECT.md`、`GLOSSARY.md`、`docs/adr/0001-baidu-netdisk-as-import-source.md`。
 2. 看 `git status` 和 `git log --oneline -3`。
 3. 依赖有变动时跑 `bun install`。
-4. 没有 `.env` 时 `cp .env.example .env`，填好 secrets。
+4. 没有 `.env` 时 `cp .env.example .env`，填好 secrets；手机扫码预览需核对 `VITE_PUBLIC_BASE_URL` / `VITE_PUBLIC_ADMIN_BASE_URL` 里的局域网 IP（`ipconfig getifaddr en0` 查询，IP 变了要同步改）。
 5. `bun run db:up`，然后 `bun run dev`。
 6. 验证 `/api/health`、`/api/docs`、`/admin/`。
-7. 从里程碑 2 继续。
+7. 从里程碑 5 继续。
