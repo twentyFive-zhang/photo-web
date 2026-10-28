@@ -4,6 +4,7 @@ import { Link, useParams } from "@tanstack/react-router";
 import {
   ChevronDown,
   ChevronUp,
+  CloudDownload,
   Crown,
   EyeOff,
   Globe,
@@ -24,6 +25,8 @@ import {
   useFeaturedIds,
   useInvalidateAlbum,
 } from "../../lib/shell.js";
+import { BaiduImportDialog } from "./baidu-import-dialog.jsx";
+import { ImportJobBanner } from "./import-job-banner.jsx";
 import { QrDialog } from "./qr-dialog.jsx";
 
 function thumbUrl(photo: AlbumPhotoRow): string | null {
@@ -47,6 +50,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<AlbumPhotoRow | null>(null);
   const [showQr, setShowQr] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [viewing, setViewing] = useState<number | null>(null);
 
   const invalidate = useInvalidateAlbum(albumId);
@@ -286,6 +290,9 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         )}
       </div>
 
+      {/* 导入任务进度横幅（网盘导入轮询） */}
+      <ImportJobBanner albumId={albumId} />
+
       {/* 上传 + 批量操作工具栏 */}
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-neutral-600 px-5 py-2.5 text-sm text-neutral-300 hover:border-neutral-400">
@@ -300,6 +307,15 @@ function AlbumDetail({ albumId }: { albumId: string }) {
             type="file"
           />
         </label>
+
+        <button
+          className="flex items-center gap-1.5 rounded-full border border-dashed border-neutral-600 px-5 py-2.5 text-sm text-neutral-300 hover:border-neutral-400"
+          onClick={() => setShowImport(true)}
+          type="button"
+        >
+          <CloudDownload size={15} />
+          从网盘导入
+        </button>
 
         {selected.size > 0 && (
           <>
@@ -356,6 +372,18 @@ function AlbumDetail({ albumId }: { albumId: string }) {
       {/* 专辑二维码弹窗（公开链接 + 分享链接） */}
       {showQr && album && (
         <QrDialog album={album} onClose={() => setShowQr(false)} />
+      )}
+
+      {/* 百度网盘导入弹窗 */}
+      {showImport && (
+        <BaiduImportDialog
+          albumId={albumId}
+          onClose={() => setShowImport(false)}
+          onImported={() => {
+            setShowImport(false);
+            invalidate();
+          }}
+        />
       )}
 
       {/* 大图灯箱 */}

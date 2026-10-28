@@ -128,7 +128,6 @@
 M2 认证 + 内容 CRUD、M3 上传 + 展示纵向切片、M4 后台完整 + 前台完整。详见第 6 节里程碑规划表与对应提交（`ee4c7ce` / `72c865a` / `904b33b`）。
 
 ### M4 后体验增强（已完成，2026-10-28，提交 `b121caf`..`e88b790`）
-
 后台（`b121caf` / `ddbcabc` / `ac3c5a8`）：
 
 - 专辑"二维码"弹窗：公开链接 + `/s/:shareToken` 分享链接双码，前端 `qrcode` 库生成，可复制链接（含非安全上下文 `execCommand` 降级）、下载 512px PNG；URL 为可点击链接（新标签打开）
@@ -144,6 +143,17 @@ M2 认证 + 内容 CRUD、M3 上传 + 展示纵向切片、M4 后台完整 + 前
 - 照片详情页 `/albums/:publicId/photos/:photoPublicId`：服务端渲染大图 + 上一张/下一张（循环）+ EXIF，独立 OG 卡片
 - 缩略图为原生链接指向照片页（客户端 JS 失效时仍可整页跳转浏览），JS 正常时拦截为灯箱（键盘/按钮翻页）
 - 专辑页"复制链接"分享按钮 + toast；灯箱控制图标化
+
+### M5 百度网盘导入（代码完成，2026-10-28；待真实凭证端到端验收）
+
+- **OAuth**：`GET /api/admin/baidu/authorize`（state 存 session 防 CSRF）→ callback 换 token → uinfo 冒烟 → `BaiduCredential` 单行落库（AES-256-GCM 加密，`APP_ENCRYPTION_KEY`）；懒刷新（距过期 <24h 或 -6/111 时刷新重试一次，in-flight 去重）
+- **浏览**：`GET /api/admin/baidu/files` 代理 `xpan/file?method=list`（`web=1` 缩略图、分页 100），浏览根限定 `/apps`（2026-06 后应用的目录权限边界）
+- **导入**：`POST /api/admin/imports/baidu`——文件夹在创建任务时同步递归展开（图片过滤 category===3 + 扩展名白名单，单任务 ≤500 张超限报错）；BullMQ 队列 `import`（processor 在 API 进程内，concurrency 2，`ImportModule` 自包含可拆独立 worker）；逐条 filemetas 取 dlink → 下载（固定 `User-Agent: pan.baidu.com`）→ 复用 `PhotoService.createPhotoFromBuffer`（本地上传与导入共用：sha256 去重→SKIPPED、三档 WebP、EXIF）
+- **进度/重试**：条目计数实时写回 job；`GET /admin/imports/:jobId` + 专辑横幅 2s 轮询（终态停止）；`POST /admin/imports/:jobId/retry` 重置 FAILED→PENDING 重新入队；job 终态按条目派生（全成 SUCCEEDED / 混合 PARTIAL / 全败 FAILED）；中断恢复：中间态条目重置 PENDING 续跑
+- **后台 UI**：专辑页「从网盘导入」弹窗（连接状态、面包屑浏览、多选、分页）+ 进度横幅（进度条、失败项展开、重试按钮）
+- 已验证（无凭证）：`/status` 优雅降级、未连接 400/409、本地上传回归（409 去重、三档图、EXIF 不变）、lint/typecheck/build 全绿
+- **凭证到位后的验收步骤**：`.env` 填 `BAIDU_APP_KEY/SECRET` + 控制台配 redirect_uri → 弹窗授权 → 照片放入 `/我的应用数据/{应用名}/` → 选文件夹导入；中途 `docker compose stop redis` 再恢复，重试后任务完成（M5 完成标志）
+- 注意：运行 `biome check --write --unsafe` 会把 NestJS DI 构造器参数的 import 转成 type-only 导致启动失败，禁止使用（见各 service 里的 `biome-ignore lint/style/useImportType` 注释惯例）
 
 ## 5. 仓库结构与命令
 

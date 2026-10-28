@@ -66,6 +66,20 @@ export class PhotoProcessingService {
     }
   }
 
+  /** 按文件内容（而非客户端声称的 mimetype）校验，导入流程用。 */
+  async assertBufferSupported(buffer: Buffer): Promise<void> {
+    if (buffer.byteLength > MAX_UPLOAD_BYTES) {
+      throw new UnsupportedMediaTypeException("文件超过 50MB 上限");
+    }
+    const metadata = await sharp(buffer).metadata();
+    const mimetype = metadata.format ? `image/${metadata.format}` : "";
+    if (!ALLOWED_MIME.has(mimetype)) {
+      throw new UnsupportedMediaTypeException(
+        "仅支持 JPEG / PNG / WebP（HEIC 转换将在后续里程碑支持）",
+      );
+    }
+  }
+
   /** 原图尺寸；EXIF 方向标记会交换宽高。 */
   async readOriginal(buffer: Buffer): Promise<OriginalImage> {
     const metadata = await sharp(buffer).metadata();

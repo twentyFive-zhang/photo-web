@@ -6,9 +6,13 @@ import {
   adminSchema,
   albumSchema,
   apiHealthSchema,
+  baiduConnectionStatusSchema,
+  baiduDirectoryListingSchema,
   changePasswordInputSchema,
   createAlbumInputSchema,
+  createBaiduImportInputSchema,
   featuredItemSchema,
+  importJobSchema,
   loginInputSchema,
   photoSchema,
   publicAlbumSchema,
@@ -404,6 +408,117 @@ export function buildOpenApiDocument(): OpenApiDocument {
     security,
     request: { body: { content: json(updateSiteSettingInputSchema) } },
     responses: ok(siteSetting, "已更新"),
+  });
+
+  // ---------- baidu / import（M5 网盘导入） ----------
+  const baiduStatus = baiduConnectionStatusSchema.meta({
+    id: "BaiduConnectionStatus",
+  });
+  const baiduListing = baiduDirectoryListingSchema.meta({
+    id: "BaiduDirectoryListing",
+  });
+  const importJob = importJobSchema.meta({ id: "ImportJob" });
+  const baiduParams = z.object({
+    dir: z.string().optional(),
+    page: z.string().optional(),
+  });
+
+  registry.registerPath({
+    method: "get",
+    path: "/api/admin/baidu/status",
+    summary: "百度网盘连接状态（不含 token 本体）",
+    tags: ["baidu"],
+    security,
+    responses: ok(baiduStatus, "连接状态"),
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/admin/baidu/authorize",
+    summary: "发起百度 OAuth 授权（302 到百度授权页）",
+    tags: ["baidu"],
+    security,
+    responses: {
+      302: { description: "跳转百度授权页" },
+      400: { description: "未配置百度应用" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/admin/baidu/callback",
+    summary: "OAuth 回调（校验 state → 换 token → 落库 → 跳回后台）",
+    tags: ["baidu"],
+    request: {
+      query: z.object({ code: z.string(), state: z.string() }),
+    },
+    responses: {
+      302: { description: "跳回后台" },
+      400: { description: "state 校验失败" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/admin/baidu/disconnect",
+    summary: "断开百度网盘授权（删除凭证）",
+    tags: ["baidu"],
+    security,
+    responses: noContent(),
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/admin/baidu/files",
+    summary: "浏览网盘目录（分页，根路径限定 /apps）",
+    tags: ["baidu"],
+    security,
+    request: { query: baiduParams },
+    responses: {
+      ...ok(baiduListing, "目录内容"),
+      400: { description: "目录越出 /apps 边界" },
+      409: { description: "未连接百度网盘" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/admin/imports/baidu",
+    summary:
+      "创建网盘导入任务（文件夹同步展开，图片过滤，单任务 ≤500 张；文件夹展开超过上限报错）",
+    tags: ["import"],
+    security,
+    request: { body: { content: json(createBaiduImportInputSchema) } },
+    responses: {
+      ...ok(importJob, "已创建的导入任务"),
+      400: { description: "无可导入图片或超上限" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/admin/imports/{jobId}",
+    summary: "导入任务详情（含条目与失败原因）",
+    tags: ["import"],
+    security,
+    request: { params: z.object({ jobId: z.string() }) },
+    responses: { ...ok(importJob, "导入任务"), 404: { description: "不存在" } },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/admin/imports/{jobId}/retry",
+    summary: "重试失败条目（重置为 PENDING 后重新入队）",
+    tags: ["import"],
+    security,
+    request: { params: z.object({ jobId: z.string() }) },
+    responses: {
+      ...ok(importJob, "重试后的任务"),
+      400: { description: "没有可重试的失败项" },
+      404: { description: "不存在" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/admin/albums/{albumId}/imports",
+    summary: "专辑最近导入任务（进度横幅轮询用）",
+    tags: ["import"],
+    security,
+    request: { params: z.object({ albumId: z.string() }) },
+    responses: ok(z.array(importJob), "任务列表"),
   });
 
   return new OpenApiGeneratorV31(registry.definitions).generateDocument({

@@ -32,6 +32,26 @@ export { featuredItemSchema, setFeaturedInputSchema } from "./featured.js";
 export type { ApiHealth } from "./health.js";
 export { API_PREFIX, apiHealthSchema, SITE_NAME } from "./health.js";
 export type {
+  BaiduConnectionStatus,
+  BaiduDirectoryListing,
+  BaiduFileEntry,
+  CreateBaiduImportInput,
+  ImportItem,
+  ImportItemStatus,
+  ImportJob,
+  ImportJobStatus,
+} from "./import.js";
+export {
+  baiduConnectionStatusSchema,
+  baiduDirectoryListingSchema,
+  baiduFileEntrySchema,
+  createBaiduImportInputSchema,
+  importItemSchema,
+  importItemStatusSchema,
+  importJobSchema,
+  importJobStatusSchema,
+} from "./import.js";
+export type {
   BatchDeletePhotosInput,
   BatchMovePhotosInput,
   ImageFormat,

@@ -87,8 +87,18 @@ export class PhotoService {
     }
 
     this.processing.assertUploadable(file.mimetype, file.size);
+    return this.createPhotoFromBuffer(albumId, file.buffer);
+  }
 
-    const sha256 = createHash("sha256").update(file.buffer).digest("hex");
+  /**
+   * 照片创建核心（本地上传与网盘导入共用）：
+   * sha256 去重（重复抛 ConflictException）→ 三档 WebP + EXIF → 落存储 → 事务落库。
+   * 调用方需先完成专辑存在性检查与格式校验。
+   */
+  async createPhotoFromBuffer(albumId: string, buffer: Buffer): Promise<Photo> {
+    await this.processing.assertBufferSupported(buffer);
+
+    const sha256 = createHash("sha256").update(buffer).digest("hex");
     const duplicate = await this.prisma.photo.findUnique({
       where: { sha256 },
       select: { id: true },
@@ -97,9 +107,9 @@ export class PhotoService {
       throw new ConflictException("相同内容的照片已存在");
     }
 
-    const original = await this.processing.readOriginal(file.buffer);
-    const renditions = await this.processing.generateRenditions(file.buffer);
-    const exif = await this.processing.extractExif(file.buffer);
+    const original = await this.processing.readOriginal(buffer);
+    const renditions = await this.processing.generateRenditions(buffer);
+    const exif = await this.processing.extractExif(buffer);
 
     for (let attempt = 0; attempt < 3; attempt++) {
       const publicId = generatePublicId();
@@ -110,7 +120,7 @@ export class PhotoService {
       }));
 
       try {
-        await this.storage.put(originalKey, file.buffer);
+        await this.storage.put(originalKey, buffer);
         await Promise.all(
           renditionFiles.map(({ key, rendition }) =>
             this.storage.put(key, rendition.buffer),
