@@ -14,6 +14,8 @@ import {
   featuredItemSchema,
   importJobSchema,
   loginInputSchema,
+  netdiskScanTriggeredSchema,
+  netdiskStatusSchema,
   photoSchema,
   publicAlbumSchema,
   publicAlbumSummarySchema,
@@ -519,6 +521,66 @@ export function buildOpenApiDocument(): OpenApiDocument {
     security,
     request: { params: z.object({ albumId: z.string() }) },
     responses: ok(z.array(importJob), "任务列表"),
+  });
+
+  // ---------- netdisk（M5.5 双向同步） ----------
+  const netdiskStatus = netdiskStatusSchema.meta({ id: "NetdiskStatus" });
+  registry.registerPath({
+    method: "get",
+    path: "/api/admin/netdisk/status",
+    summary: "网盘同步状态（连接、开关、进度、待确认删除、扫描报告）",
+    tags: ["netdisk"],
+    security,
+    responses: ok(netdiskStatus, "同步状态"),
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/admin/netdisk/scan",
+    summary: "手动触发下行扫描（新文件夹自动建专辑并导入，缺失仅报告）",
+    tags: ["netdisk"],
+    security,
+    responses: {
+      ...ok(netdiskScanTriggeredSchema, "已入队"),
+      400: { description: "未连接百度网盘" },
+      409: { description: "扫描正在进行中" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/admin/netdisk/push-all",
+    summary:
+      "全量推送：所有未同步照片入队上行（增量推送自动进行，此为存量回填）",
+    tags: ["netdisk"],
+    security,
+    responses: {
+      ...ok(z.object({ queued: z.number() }), "已入队数量"),
+      400: { description: "未连接百度网盘" },
+      409: { description: "全量推送正在进行中" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/admin/netdisk/pending-deletes/{id}/confirm",
+    summary: "确认删除网盘镜像文件（站内已删；API 删除不可恢复）",
+    tags: ["netdisk"],
+    security,
+    request: { params: z.object({ id: z.string() }) },
+    responses: {
+      200: { description: "已删除" },
+      404: { description: "不存在" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/admin/netdisk/pending-deletes/{id}/dismiss",
+    summary: "放弃删除网盘镜像文件（保留副本，移除待确认记录）",
+    tags: ["netdisk"],
+    security,
+    request: { params: z.object({ id: z.string() }) },
+    responses: {
+      200: { description: "已保留" },
+      404: { description: "不存在" },
+    },
   });
 
   return new OpenApiGeneratorV31(registry.definitions).generateDocument({

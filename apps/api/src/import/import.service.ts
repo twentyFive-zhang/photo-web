@@ -21,8 +21,8 @@ import { BaiduCredentialService } from "../baidu/baidu-credential.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PrismaService } from "../prisma/prisma.service.js";
 
-/** 单个导入任务最多 500 张，防失控展开与超长任务。 */
-const MAX_ITEMS_PER_JOB = 500;
+/** 单个导入任务最多 500 张，防失控展开与超长任务（网盘自动导入分批同用此上限）。 */
+export const MAX_ITEMS_PER_JOB = 500;
 
 /** 只导入图片：扩展名白名单兜底（category===3 为主判据）。 */
 const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "webp"]);

@@ -13,6 +13,7 @@ export const siteSettingSchema = z.object({
   contactEmail: z.string().nullable(),
   wechatQrKey: z.string().nullable(),
   socialLinks: z.array(socialLinkSchema),
+  netdiskDailyScan: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -29,6 +30,7 @@ export const updateSiteSettingInputSchema = z
       .optional(),
     wechatQrKey: z.string().nullable().optional(),
     socialLinks: z.array(socialLinkSchema).max(20).optional(),
+    netdiskDailyScan: z.boolean().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, "至少提供一个要更新的字段");
 export type UpdateSiteSettingInput = z.infer<

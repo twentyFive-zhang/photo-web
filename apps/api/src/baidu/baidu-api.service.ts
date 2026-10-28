@@ -72,8 +72,33 @@ export interface BaiduUinfoResponse {
   baidu_name?: string;
 }
 
+export interface BaiduPrecreateResponse {
+  errno: number;
+  return_type: number;
+  uploadid: string;
+  block_list?: number[];
+}
+
+export interface BaiduUploadHostResponse {
+  errno: number;
+  host?: string;
+}
+
+export interface BaiduCreateResponse {
+  errno: number;
+  fs_id?: number;
+}
+
+/** filemanager 的操作类型。 */
+export type BaiduFilemanagerOpera = "delete" | "move" | "rename";
+
 const PAN_BASE = "https://pan.baidu.com";
+const PCS_BASE = "https://d.pcs.baidu.com";
 const OAUTH_TOKEN_URL = "https://openapi.baidu.com/oauth/2.0/token";
+/** 分片上传固定 appid（官方文档固定值）。 */
+const PCS_APPID = 250528;
+/** 普通用户分片大小固定 4MB。 */
+export const BAIDU_CHUNK_SIZE = 4 * 1024 * 1024;
 
 /** errno → 类型化错误；调用方据此决定是否刷新 token / 重试。 */
 function assertOk(errno: number, context: string): void {
@@ -221,6 +246,160 @@ export class BaiduApiService {
       );
     }
     return Buffer.from(await response.arrayBuffer());
+  }
+
+  /**
+   * 上传前置：取分片上传主机（约 60s 时效，每次上传前现取）。
+   */
+  async locateupload(): Promise<string> {
+    const params = new URLSearchParams({
+      method: "locateupload",
+      appid: String(PCS_APPID),
+    });
+    const response = await fetch(
+      `${PCS_BASE}/rest/2.0/pcs/file?${params.toString()}`,
+    );
+    const data = (await response.json()) as BaiduUploadHostResponse;
+    if (data.errno !== 0 || !data.host) {
+      throw new BaiduApiError(
+        `获取上传主机失败 (errno ${data.errno})`,
+        data.errno,
+      );
+    }
+    return data.host;
+  }
+
+  /**
+   * 上传第一阶段：precreate 校验分片，返回 uploadid。
+   * contentMd5/sliceMd5 用于秒传探测（无文档承诺，失败也只是多传一遍）。
+   * rtype=3：同名同路径时覆盖。
+   */
+  async precreate(
+    accessToken: string,
+    input: {
+      path: string;
+      size: number;
+      blockList: string[];
+      contentMd5: string;
+      sliceMd5: string;
+    },
+  ): Promise<BaiduPrecreateResponse> {
+    const params = new URLSearchParams({
+      method: "precreate",
+      access_token: accessToken,
+      path: input.path,
+      size: String(input.size),
+      isdir: "0",
+      block_list: JSON.stringify(input.blockList),
+      "content-md5": input.contentMd5,
+      "slice-md5": input.sliceMd5,
+      rtype: "3",
+    });
+    const response = await fetch(
+      `${PAN_BASE}/rest/2.0/xpan/file?${params.toString()}`,
+      { method: "POST" },
+    );
+    const data = (await response.json()) as BaiduPrecreateResponse;
+    assertOk(data.errno, "上传预创建");
+    return data;
+  }
+
+  /** 上传第二阶段：单片上传（4MB），partseq 从 0 开始。 */
+  async superfile2(
+    accessToken: string,
+    input: {
+      host: string;
+      path: string;
+      uploadid: string;
+      partseq: number;
+      chunk: Buffer;
+    },
+  ): Promise<void> {
+    const params = new URLSearchParams({
+      method: "upload",
+      access_token: accessToken,
+      type: "object",
+      path: input.path,
+      uploadid: input.uploadid,
+      partseq: String(input.partseq),
+    });
+    const form = new FormData();
+    form.append(
+      "file",
+      new Blob([new Uint8Array(input.chunk)]),
+      `blob-${input.partseq}`,
+    );
+    const response = await fetch(
+      `https://${input.host}/rest/2.0/pcs/superfile2?${params.toString()}`,
+      { method: "POST", body: form },
+    );
+    const data = (await response.json()) as { errno: number };
+    assertOk(data.errno, "上传分片");
+  }
+
+  /** 上传第三阶段：create 提交合并，返回 fs_id。 */
+  async create(
+    accessToken: string,
+    input: {
+      path: string;
+      size: number;
+      uploadid: string;
+      blockList: string[];
+    },
+  ): Promise<number> {
+    const params = new URLSearchParams({
+      method: "create",
+      access_token: accessToken,
+      path: input.path,
+      size: String(input.size),
+      isdir: "0",
+      block_list: JSON.stringify(input.blockList),
+      uploadid: input.uploadid,
+      rtype: "3",
+    });
+    const response = await fetch(
+      `${PAN_BASE}/rest/2.0/xpan/file?${params.toString()}`,
+      { method: "POST" },
+    );
+    const data = (await response.json()) as BaiduCreateResponse;
+    assertOk(data.errno, "提交上传");
+    if (!data.fs_id) {
+      throw new BaiduApiError("提交上传未返回 fs_id", data.errno);
+    }
+    return data.fs_id;
+  }
+
+  /**
+   * 文件管理（move/rename/delete）。filelist 为 JSON 数组，条目形如
+   * {"path": "..."}（move 另有顶层 dest；rename 条目带 newname）。
+   * errno 111 在此接口表示"有异步任务执行中"，可稍后重试——故在
+   * assertOk 之前拦截，避免被当成 token 失效触发无谓刷新。
+   */
+  async filemanager(
+    accessToken: string,
+    opera: BaiduFilemanagerOpera,
+    filelist: Record<string, string>[],
+    dest?: string,
+  ): Promise<void> {
+    const params = new URLSearchParams({
+      method: "filemanager",
+      access_token: accessToken,
+      opera,
+      async: "1",
+      filelist: JSON.stringify(filelist),
+      ...(dest ? { dest } : {}),
+    });
+    const response = await fetch(
+      `${PAN_BASE}/rest/2.0/xpan/file?${params.toString()}`,
+    );
+    const data = (await response.json()) as { errno: number };
+    if (data.errno === 111) {
+      throw new BaiduApiError("网盘异步任务执行中，稍后重试", 111);
+    }
+    if (data.errno === 12) {
+      throw new BaiduRateLimitError(data.errno);
+    }
+    assertOk(data.errno, "网盘文件管理");
   }
 
   private async tokenRequest(

@@ -52,6 +52,20 @@ export {
   importJobStatusSchema,
 } from "./import.js";
 export type {
+  NetdiskMissingPhoto,
+  NetdiskPendingDelete,
+  NetdiskScanReport,
+  NetdiskScanTriggered,
+  NetdiskStatus,
+} from "./netdisk.js";
+export {
+  netdiskMissingPhotoSchema,
+  netdiskPendingDeleteSchema,
+  netdiskScanReportSchema,
+  netdiskScanTriggeredSchema,
+  netdiskStatusSchema,
+} from "./netdisk.js";
+export type {
   BatchDeletePhotosInput,
   BatchMovePhotosInput,
   ImageFormat,

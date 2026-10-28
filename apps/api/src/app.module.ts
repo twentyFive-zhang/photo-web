@@ -11,6 +11,7 @@ import { BaiduModule } from "./baidu/baidu.module.js";
 import { validateEnv } from "./config/env.js";
 import { FeaturedModule } from "./featured/featured.module.js";
 import { ImportModule } from "./import/import.module.js";
+import { NetdiskModule } from "./netdisk/netdisk.module.js";
 import { PhotoModule } from "./photo/photo.module.js";
 import { PrismaModule } from "./prisma/prisma.module.js";
 import { SettingsModule } from "./settings/settings.module.js";
@@ -63,6 +64,7 @@ function redisConnectionOptions(config: ConfigService) {
     SettingsModule,
     BaiduModule,
     ImportModule,
+    NetdiskModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

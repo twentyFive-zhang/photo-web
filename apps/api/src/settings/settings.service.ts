@@ -17,6 +17,7 @@ function toSiteSetting(setting: {
   contactEmail: string | null;
   wechatQrKey: string | null;
   socialLinks: unknown;
+  netdiskDailyScan: boolean;
   createdAt: Date;
   updatedAt: Date;
 }): SiteSetting {
@@ -29,6 +30,7 @@ function toSiteSetting(setting: {
     socialLinks: Array.isArray(setting.socialLinks)
       ? (setting.socialLinks as SiteSetting["socialLinks"])
       : [],
+    netdiskDailyScan: setting.netdiskDailyScan,
     createdAt: setting.createdAt.toISOString(),
     updatedAt: setting.updatedAt.toISOString(),
   };
@@ -75,6 +77,9 @@ export class SettingsService {
             : {}),
           ...(input.socialLinks !== undefined
             ? { socialLinks: input.socialLinks }
+            : {}),
+          ...(input.netdiskDailyScan !== undefined
+            ? { netdiskDailyScan: input.netdiskDailyScan }
             : {}),
         },
       })

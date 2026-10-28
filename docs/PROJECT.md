@@ -128,6 +128,7 @@
 M2 认证 + 内容 CRUD、M3 上传 + 展示纵向切片、M4 后台完整 + 前台完整。详见第 6 节里程碑规划表与对应提交（`ee4c7ce` / `72c865a` / `904b33b`）。
 
 ### M4 后体验增强（已完成，2026-10-28，提交 `b121caf`..`e88b790`）
+
 后台（`b121caf` / `ddbcabc` / `ac3c5a8`）：
 
 - 专辑"二维码"弹窗：公开链接 + `/s/:shareToken` 分享链接双码，前端 `qrcode` 库生成，可复制链接（含非安全上下文 `execCommand` 降级）、下载 512px PNG；URL 为可点击链接（新标签打开）
@@ -154,6 +155,20 @@ M2 认证 + 内容 CRUD、M3 上传 + 展示纵向切片、M4 后台完整 + 前
 - 已验证（无凭证）：`/status` 优雅降级、未连接 400/409、本地上传回归（409 去重、三档图、EXIF 不变）、lint/typecheck/build 全绿
 - **凭证到位后的验收步骤**：`.env` 填 `BAIDU_APP_KEY/SECRET` + 控制台配 redirect_uri → 弹窗授权 → 照片放入 `/我的应用数据/{应用名}/` → 选文件夹导入；中途 `docker compose stop redis` 再恢复，重试后任务完成（M5 完成标志）
 - 注意：运行 `biome check --write --unsafe` 会把 NestJS DI 构造器参数的 import 转成 type-only 导致启动失败，禁止使用（见各 service 里的 `biome-ignore lint/style/useImportType` 注释惯例）
+
+### M5.5 网盘双向同步（代码完成，2026-10-28；待应用目录确认后端到端验收）
+
+决策见 `docs/adr/0002-baidu-netdisk-bidirectional-sync.md`（发布库是唯一权威存储，网盘为热备份镜像）：
+
+- **上行推送**：本地上传成功后自动入队 `netdisk-sync` 队列 push 任务（concurrency 2）；三阶段上传 precreate（分片 MD5 + 秒传探测）→ superfile2（4MB 分片，locateupload 现取主机）→ create，rtype=3；成功回写 `Photo.netdiskFsId/netdiskPath`
+- **存量回填**：设置页「全量推送」把所有未同步照片入队；进度用 syncedCount/totalPhotos 实时算
+- **下行扫描**：每日 00:30 repeatable（启动时 upsertJobScheduler 注册，执行时检查 `SiteSetting.netdiskDailyScan` 开关）+ 手动「立即检查」；遍历 `/apps/{应用名}/` 全树，fsid 对比 `Photo.netdiskFsId`：新文件夹自动建专辑（仅链接可见）并分批（≤500/任务）走 import 队列自动导入（成功回写 fsid）；网盘侧缺失仅写报告（`SiteSetting.netdiskScanReport`），站内永不动
+- **改名/移动传播**：专辑重命名 → filemanager rename 目录；照片换专辑 → filemanager move（均异步可重试，目录不存在视为跳过）
+- **删除不自动传播**：站内删除（单张/批量/删专辑）→ 已镜像照片写 `NetdiskPendingDelete`（幂等）；设置页「待确认删除」列表确认后 filemanager delete（-9 视为已达成）或保留
+- **应用目录**：`BAIDU_APP_NAME`（可选 env）指定 `/apps/{应用名}`；部分账号不能列 `/apps` 虚拟根（errno -9），配置后浏览根/扫描根直接定位应用目录
+- **后台 UI**：设置页「百度网盘镜像同步」卡片（连接状态、开关、立即检查、全量推送、扫描报告、待确认删除）
+- 已验证：lint/typecheck/build 全绿；API 启动无 DI 错误；OpenAPI 注册 5 条 netdisk 路由；status/scan/push-all 降级正常；真实扫描因 BAIDU_APP_NAME 待确认暂报 errno -9
+- **验收剩余步骤**：确认 `.env` 的 `BAIDU_APP_NAME` 与百度控制台应用名称一致 → 扫描报告 DONE → 上传照片自动推送 → 网盘改名/移动传播 → 删除待确认流程
 
 ## 5. 仓库结构与命令
 

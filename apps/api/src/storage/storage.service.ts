@@ -1,4 +1,4 @@
-import { mkdir, rmdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Injectable } from "@nestjs/common";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
@@ -30,6 +30,11 @@ export class StorageService {
     const target = join(this.root, key);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, data);
+  }
+
+  /** 读取存储内容（网盘上行推送原件用）。 */
+  async get(key: string): Promise<Buffer> {
+    return readFile(join(this.root, key));
   }
 
   /** 尽力删除：文件不存在时忽略；删除后若父目录为空则一并移除。 */

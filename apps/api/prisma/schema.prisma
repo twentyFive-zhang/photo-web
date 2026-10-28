@@ -84,6 +84,10 @@ model Photo {
   height      Int
   exif        Json?
   sortOrder   Int      @default(0)
+  // 已推送到百度网盘镜像的文件 fs_id（字符串存 uint64 防精度丢失）；null = 未同步
+  netdiskFsId String?  @unique
+  // 网盘镜像中的完整路径（/apps/{应用名}/{专辑}/{文件名}），move/rename/delete 传播用
+  netdiskPath String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -189,14 +193,30 @@ model BaiduCredential {
   updatedAt    DateTime @updatedAt
 }
 
+/// 站内已删除、网盘镜像删除待人工确认的照片（API 删除是否进回收站无承诺，按不可恢复对待）
+model NetdiskPendingDelete {
+  id          String   @id @default(cuid())
+  netdiskFsId String
+  path        String
+  filename    String
+  albumTitle  String
+  createdAt   DateTime @default(now())
+
+  @@unique([netdiskFsId])
+}
+
 model SiteSetting {
-  id              String   @id @default("singleton")
-  siteName        String   @default("江流儿摄影")
-  siteDescription String   @default("")
-  about           String   @default("")
-  contactEmail    String?
-  wechatQrKey     String?
-  socialLinks     Json?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                String   @id @default("singleton")
+  siteName          String   @default("江流儿摄影")
+  siteDescription   String   @default("")
+  about             String   @default("")
+  contactEmail      String?
+  wechatQrKey       String?
+  socialLinks       Json?
+  // 每日凌晨自动扫描网盘增量（下行同步）
+  netdiskDailyScan  Boolean  @default(true)
+  // 最近一次下行扫描报告（ albumsCreated/importedCount/missing 等）
+  netdiskScanReport Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }

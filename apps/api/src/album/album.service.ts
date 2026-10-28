@@ -12,6 +12,8 @@ import type {
 import { Prisma } from "@prisma/client";
 import { generatePublicId, generateShareToken } from "../common/id.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
+import { NetdiskSyncService } from "../netdisk/netdisk-sync.service.js";
+// biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PrismaService } from "../prisma/prisma.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { StorageService } from "../storage/storage.service.js";
@@ -77,6 +79,7 @@ export class AlbumService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly netdisk: NetdiskSyncService,
   ) {}
 
   async list(): Promise<Album[]> {
@@ -157,14 +160,31 @@ export class AlbumService {
       },
       include: albumInclude,
     });
+    // 标题变更 → 网盘镜像目录跟随重命名（异步，失败可重试）
+    if (input.title !== undefined && input.title !== existing.title) {
+      await this.netdisk.enqueueRenameAlbum({
+        albumId: id,
+        oldTitle: existing.title,
+        newTitle: input.title,
+      });
+    }
     return toAlbum(album);
   }
 
   async remove(id: string): Promise<void> {
     // 级联删除在 DB 层完成；存储文件需先收集、删库后清理
+    const existing = await this.prisma.album.findUnique({
+      where: { id },
+      select: { title: true },
+    });
     const photos = await this.prisma.photo.findMany({
       where: { albumId: id },
-      select: { originalKey: true, renditions: { select: { key: true } } },
+      select: {
+        originalKey: true,
+        renditions: { select: { key: true } },
+        netdiskFsId: true,
+        netdiskPath: true,
+      },
     });
     await this.prisma.album.delete({ where: { id } }).catch(() => {
       throw new NotFoundException("专辑不存在");
@@ -174,6 +194,17 @@ export class AlbumService {
         photo.originalKey,
         ...photo.renditions.map((rendition) => rendition.key),
       ]),
+    );
+    // 已镜像照片 → 网盘删除待人工确认（不自动传播，ADR 0002）
+    await this.netdisk.markPendingDeletes(
+      photos
+        .filter((photo) => photo.netdiskFsId)
+        .map((photo) => ({
+          netdiskFsId: photo.netdiskFsId ?? "",
+          netdiskPath: photo.netdiskPath,
+          fallbackFilename: photo.originalKey.split("/").pop() ?? "",
+          albumTitle: existing?.title ?? "",
+        })),
     );
   }
 

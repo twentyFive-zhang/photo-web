@@ -37,6 +37,12 @@ export class BaiduController {
     private readonly config: ConfigService<Env, true>,
   ) {}
 
+  /** 浏览根：配置了 BAIDU_APP_NAME 时直接定位应用目录（/apps 虚拟根部分账号不可列）。 */
+  private get browseRoot(): string {
+    const appName = this.config.get("BAIDU_APP_NAME", { infer: true });
+    return appName ? `${BROWSE_ROOT}/${appName}` : BROWSE_ROOT;
+  }
+
   @Get("status")
   status(): Promise<BaiduConnectionStatus> {
     return this.credentials.getStatus();
@@ -88,23 +94,22 @@ export class BaiduController {
     if (!(await this.credentials.isConnected())) {
       throw new ConflictException("尚未连接百度网盘，请先授权");
     }
-    const dir = normalizeDir(dirParam);
+    const dir = this.normalizeDir(dirParam);
     const page = Math.max(1, Number.parseInt(pageParam ?? "1", 10) || 1);
     const response = await this.credentials.withAccessToken((token) =>
       this.baiduApi.list(token, dir, page),
     );
     return toBaiduDirectoryListing(dir, page, response);
   }
-}
-
-/** 归一化浏览目录：空 → /apps；越出 /apps 一律拒到边界。 */
-function normalizeDir(raw?: string): string {
-  const dir = raw?.trim();
-  if (!dir || dir === "/") {
-    return BROWSE_ROOT;
+  /** 归一化浏览目录：空 → 浏览根；越出 /apps 一律拒到边界。 */
+  private normalizeDir(raw?: string): string {
+    const dir = raw?.trim();
+    if (!dir || dir === "/" || dir === BROWSE_ROOT) {
+      return this.browseRoot;
+    }
+    if (!dir.startsWith(`${BROWSE_ROOT}/`)) {
+      throw new BadRequestException("只能浏览 /apps/ 目录下的文件");
+    }
+    return dir.replace(/\/+$/, "") || this.browseRoot;
   }
-  if (!dir.startsWith("/apps/") && dir !== BROWSE_ROOT) {
-    throw new BadRequestException("只能浏览 /apps/ 目录下的文件");
-  }
-  return dir.replace(/\/+$/, "") || BROWSE_ROOT;
 }

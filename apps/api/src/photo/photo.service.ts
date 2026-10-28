@@ -14,6 +14,8 @@ import { normalizeTagNames } from "@photo/shared";
 import { Prisma } from "@prisma/client";
 import { generatePublicId } from "../common/id.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
+import { NetdiskSyncService } from "../netdisk/netdisk-sync.service.js";
+// biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PrismaService } from "../prisma/prisma.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { StorageService } from "../storage/storage.service.js";
@@ -74,9 +76,10 @@ export class PhotoService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly processing: PhotoProcessingService,
+    private readonly netdisk: NetdiskSyncService,
   ) {}
 
-  /** 本地上传：原件 + 三档 WebP 落存储，元数据/EXIF 落库。 */
+  /** 本地上传：原件 + 三档 WebP 落存储，元数据/EXIF 落库；入队网盘上行推送。 */
   async upload(albumId: string, file: Express.Multer.File): Promise<Photo> {
     const album = await this.prisma.album.findUnique({
       where: { id: albumId },
@@ -87,7 +90,9 @@ export class PhotoService {
     }
 
     this.processing.assertUploadable(file.mimetype, file.size);
-    return this.createPhotoFromBuffer(albumId, file.buffer);
+    const photo = await this.createPhotoFromBuffer(albumId, file.buffer);
+    await this.netdisk.enqueuePush(photo.id);
+    return photo;
   }
 
   /**
@@ -201,7 +206,13 @@ export class PhotoService {
   async remove(id: string): Promise<void> {
     const photo = await this.prisma.photo.findUnique({
       where: { id },
-      select: { originalKey: true, renditions: { select: { key: true } } },
+      select: {
+        originalKey: true,
+        renditions: { select: { key: true } },
+        netdiskFsId: true,
+        netdiskPath: true,
+        album: { select: { title: true } },
+      },
     });
     if (!photo) {
       throw new NotFoundException("照片不存在");
@@ -211,13 +222,24 @@ export class PhotoService {
       photo.originalKey,
       ...photo.renditions.map((rendition) => rendition.key),
     ]);
+    // 已镜像的照片 → 网盘删除待人工确认（不自动传播，ADR 0002）
+    if (photo.netdiskFsId) {
+      await this.netdisk.markPendingDeletes([
+        {
+          netdiskFsId: photo.netdiskFsId,
+          netdiskPath: photo.netdiskPath,
+          fallbackFilename: photo.originalKey.split("/").pop() ?? id,
+          albumTitle: photo.album.title,
+        },
+      ]);
+    }
   }
 
-  /** 批量移动 = 换专辑（一张照片只属于一个专辑）。 */
+  /** 批量移动 = 换专辑（一张照片只属于一个专辑）；已镜像照片跟随网盘移动。 */
   async batchMove(photoIds: string[], targetAlbumId: string): Promise<number> {
     const album = await this.prisma.album.findUnique({
       where: { id: targetAlbumId },
-      select: { id: true },
+      select: { id: true, title: true },
     });
     if (!album) {
       throw new NotFoundException("目标专辑不存在");
@@ -227,13 +249,29 @@ export class PhotoService {
       where: { id: { in: photoIds } },
       data: { albumId: targetAlbumId },
     });
+    const mirrored = await this.prisma.photo.findMany({
+      where: { id: { in: photoIds }, netdiskFsId: { not: null } },
+      select: { id: true },
+    });
+    await this.netdisk.enqueueMoves(
+      mirrored.map((photo) => ({
+        photoId: photo.id,
+        destAlbumTitle: album.title,
+      })),
+    );
     return result.count;
   }
 
   async batchDelete(photoIds: string[]): Promise<number> {
     const photos = await this.prisma.photo.findMany({
       where: { id: { in: photoIds } },
-      select: { originalKey: true, renditions: { select: { key: true } } },
+      select: {
+        originalKey: true,
+        renditions: { select: { key: true } },
+        netdiskFsId: true,
+        netdiskPath: true,
+        album: { select: { title: true } },
+      },
     });
     const result = await this.prisma.photo.deleteMany({
       where: { id: { in: photoIds } },
@@ -243,6 +281,16 @@ export class PhotoService {
         photo.originalKey,
         ...photo.renditions.map((rendition) => rendition.key),
       ]),
+    );
+    await this.netdisk.markPendingDeletes(
+      photos
+        .filter((photo) => photo.netdiskFsId)
+        .map((photo) => ({
+          netdiskFsId: photo.netdiskFsId ?? "",
+          netdiskPath: photo.netdiskPath,
+          fallbackFilename: photo.originalKey.split("/").pop() ?? "",
+          albumTitle: photo.album.title,
+        })),
     );
     return result.count;
   }

@@ -98,6 +98,14 @@ export class ImportProcessor extends WorkerHost {
         albumId,
         buffer,
       );
+      // 原件本来就在网盘：直接回写镜像映射，上行推送无需再传
+      await this.prisma.photo.update({
+        where: { id: photo.id },
+        data: {
+          netdiskFsId: String(fsId),
+          netdiskPath: metas[0]?.path ?? null,
+        },
+      });
 
       await this.prisma.importItem.update({
         where: { id: itemId },

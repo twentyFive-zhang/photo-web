@@ -28,6 +28,8 @@ const envSchema = z.object({
   BAIDU_APP_KEY: z.string().optional(),
   BAIDU_APP_SECRET: z.string().optional(),
   BAIDU_REDIRECT_URI: z.url().optional(),
+  // 应用名 = 网盘里 /我的应用数据/{应用名}/ 的目录名；创建应用时填写的名称
+  BAIDU_APP_NAME: z.string().optional(),
   COS_SECRET_ID: z.string().optional(),
   COS_SECRET_KEY: z.string().optional(),
   COS_BUCKET: z.string().optional(),
