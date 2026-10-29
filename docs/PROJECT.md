@@ -170,6 +170,16 @@ M2 认证 + 内容 CRUD、M3 上传 + 展示纵向切片、M4 后台完整 + 前
 - 已验证（2026-10-29，真实网盘端到端）：扫描报告 DONE（resolveAppDir 定位应用目录成功）；上传照片 2s 内自动推送、网盘可见（fsid/path 回写）；专辑改名 → 网盘目录重命名；照片换专辑 → filemanager move 传播；删除 → 待确认 → 确认后网盘文件消失；遗留探针文件已清理
 - 调试中确认的百度接口契约（均已固化进 `BaiduApiService`）：xpan/file 的 POST 接口（precreate/create/filemanager）query 只放 method+access_token（filemanager 另加 opera），其余参数放 form body，须整体 URL 编码（原样 JSON 报 errno 2）；precreate 必带 autoinit=1；locateupload 需 access_token/path/uploadid/upload_version=2.0，响应字段是 error_code 而非 errno；superfile2 成功响应无 errno（只有 md5），失败用 error_code；filemanager delete 的 filelist 是纯路径字符串数组，move 的 dest 放在条目内，rename 用 async=1 同步取逐文件结果（info[].errno=-9 = 目录从未推送过）
 
+### M5.6 网盘浏览页（设计已确认，2026-10-29；待实现）
+
+后台新页面 `/netdisk`（顶部导航「网盘」入口），树形查看百度网盘文件目录。设计决策（grilling 确认）：
+
+- **只读**：不在页面上操作网盘侧文件（删除/改名一律走站内既有流程，保护镜像一致性——站内是唯一权威存储，见 ADR 0002）
+- **文件树**：懒加载（百度 list 只能逐层列）——初始只展示应用根一层，点开文件夹才拉子级，已展开内容前端缓存；单文件夹超 100 条节点内「加载更多」（复用 `GET /admin/baidu/files` 分页）
+- **站内对照标注**：图片按 fsid 对照 `Photo.netdiskFsId` 标「已导入/未导入」；文件夹按目录名（sanitize 后）对照专辑标题标对应专辑名或「未对应」
+- **缩略图与预览**：图片行显示百度缩略图（现有 API 已带），点击灯箱放大（低清、有 8h 时效，加载失败显示占位图标）
+- **导入操作**（站内方向，修复而非破坏镜像）：图片文件勾选多选 → 选目标专辑 → 复用 `POST /admin/imports/baidu`（进度横幅同款）；文件夹行「导入此文件夹」按钮 → 后端递归展开（≤500 张）
+
 ## 5. 仓库结构与命令
 
 ```text
