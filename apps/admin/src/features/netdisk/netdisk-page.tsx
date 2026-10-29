@@ -64,11 +64,8 @@ interface NodeState {
 }
 
 export function NetdiskPage() {
-  return (
-    <AdminShell>
-      <NetdiskBrowser />
-    </AdminShell>
-  );
+  // NetdiskBrowser 各分支已自带 AdminShell，这里不再包一层（否则双 header）
+  return <NetdiskBrowser />;
 }
 
 function NetdiskBrowser() {
