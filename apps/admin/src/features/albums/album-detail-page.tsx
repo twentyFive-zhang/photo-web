@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   CloudDownload,
+  CloudUpload,
   Crown,
   EyeOff,
   Globe,
@@ -190,6 +191,20 @@ function AlbumDetail({ albumId }: { albumId: string }) {
 
   const photos = photosQuery.data ?? [];
 
+  /** 按专辑补推未同步照片（连接网盘前上传或推送失败的存量）。 */
+  const pushAlbumMutation = useMutation({
+    mutationFn: () =>
+      apiFetch<{ queued: number }>(`/admin/netdisk/albums/${albumId}/push`, {
+        method: "POST",
+      }),
+    onSuccess: ({ queued }) => {
+      toast.success(
+        queued > 0 ? `已入队同步 ${queued} 张照片` : "本专辑照片都已同步",
+      );
+    },
+    onError: fail,
+  });
+
   /** 灯箱数据：LARGE 原大图（无则 null，点击时跳过打开）。 */
   const lightboxPhotos = photos.map((photo) => {
     const large = photo.renditions.find((r) => r.variant === "LARGE");
@@ -315,6 +330,16 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         >
           <CloudDownload size={15} />
           从网盘导入
+        </button>
+
+        <button
+          className="flex items-center gap-1.5 rounded-full border border-dashed border-neutral-600 px-5 py-2.5 text-sm text-neutral-300 hover:border-neutral-400"
+          disabled={pushAlbumMutation.isPending}
+          onClick={() => pushAlbumMutation.mutate()}
+          type="button"
+        >
+          <CloudUpload size={15} />
+          {pushAlbumMutation.isPending ? "入队中…" : "同步到网盘"}
         </button>
 
         {selected.size > 0 && (

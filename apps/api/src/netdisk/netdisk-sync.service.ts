@@ -143,6 +143,29 @@ export class NetdiskSyncService implements OnModuleInit {
     }
   }
 
+  /** 按专辑补推：该专辑所有未同步照片入队（jobId 与单张推送相同，天然去重），返回入队数量。 */
+  async enqueuePushAlbum(albumId: string): Promise<number> {
+    if (!(await this.credentials.isConnected())) {
+      return 0;
+    }
+    const photos = await this.prisma.photo.findMany({
+      where: { albumId, netdiskFsId: null },
+      select: { id: true },
+      orderBy: { createdAt: "asc" },
+    });
+    if (photos.length === 0) {
+      return 0;
+    }
+    await this.queue.addBulk(
+      photos.map((photo) => ({
+        name: "netdisk-sync",
+        data: { type: "push" as const, photoId: photo.id },
+        opts: { ...BULL_JOB_OPTIONS, jobId: `push-${photo.id}` },
+      })),
+    );
+    return photos.length;
+  }
+
   /** 存量回填：所有未同步照片入队。进行中返回 null。 */
   async enqueuePushAll(): Promise<PushAllState | null> {
     if (this.pushAllState) {

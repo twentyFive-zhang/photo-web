@@ -560,6 +560,18 @@ export function buildOpenApiDocument(): OpenApiDocument {
   });
   registry.registerPath({
     method: "post",
+    path: "/api/admin/netdisk/albums/{albumId}/push",
+    summary: "按专辑补推：该专辑未同步照片入队上行",
+    tags: ["netdisk"],
+    security,
+    request: { params: z.object({ albumId: z.string() }) },
+    responses: {
+      ...ok(z.object({ queued: z.number() }), "已入队数量（0 = 无待同步）"),
+      400: { description: "未连接百度网盘" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
     path: "/api/admin/netdisk/pending-deletes/{id}/confirm",
     summary: "确认删除网盘镜像文件（站内已删；API 删除不可恢复）",
     tags: ["netdisk"],

@@ -95,6 +95,18 @@ export class NetdiskController {
     return { queued: state.queued };
   }
 
+  /** 按专辑补推：该专辑未同步照片入队（连接网盘前上传或推送失败的存量）。 */
+  @Post("albums/:albumId/push")
+  @HttpCode(HttpStatus.OK)
+  async pushAlbum(
+    @Param("albumId") albumId: string,
+  ): Promise<{ queued: number }> {
+    if (!(await this.credentials.isConnected())) {
+      throw new BadRequestException("尚未连接百度网盘");
+    }
+    return { queued: await this.sync.enqueuePushAlbum(albumId) };
+  }
+
   /** 确认删除网盘镜像文件（站内已删，这里真正删网盘侧副本）。 */
   @Post("pending-deletes/:id/confirm")
   @HttpCode(HttpStatus.OK)
