@@ -161,7 +161,9 @@ function NetdiskBrowser() {
           : sorted;
         return {
           ...prev,
-          [listing.dir]: {
+          // 按请求的 dir 作键（空串 = 根）：listing.dir 是服务端归一化后的
+          // 应用根路径，与渲染读的键对不上会导致树永远不出现
+          [dir]: {
             entries: merged,
             page: listing.page,
             hasMore: listing.hasMore,
