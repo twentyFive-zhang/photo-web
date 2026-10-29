@@ -20,7 +20,7 @@ import type { SessionRequest } from "../common/admin.guard.js";
 import { AdminGuard } from "../common/admin.guard.js";
 import type { Env } from "../config/env.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
-import { BaiduApiService } from "./baidu-api.service.js";
+import { BaiduApiError, BaiduApiService } from "./baidu-api.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { BaiduCredentialService } from "./baidu-credential.service.js";
 import { toBaiduDirectoryListing } from "./baidu-mapper.js";
@@ -85,7 +85,7 @@ export class BaiduController {
     await this.credentials.disconnect();
   }
 
-  /** 浏览网盘目录（根路径限定 /apps）。 */
+  /** 浏览网盘目录（根路径限定 /apps）。目录在网盘侧不存在时返回空列表。 */
   @Get("files")
   async files(
     @Query("dir") dirParam?: string,
@@ -96,9 +96,18 @@ export class BaiduController {
     }
     const dir = this.normalizeDir(dirParam);
     const page = Math.max(1, Number.parseInt(pageParam ?? "1", 10) || 1);
-    const response = await this.credentials.withAccessToken((token) =>
-      this.baiduApi.list(token, dir, page),
-    );
+    let response: Awaited<ReturnType<typeof this.baiduApi.list>>;
+    try {
+      response = await this.credentials.withAccessToken((token) =>
+        this.baiduApi.list(token, dir, page),
+      );
+    } catch (error) {
+      // 目录尚未同步到网盘（如新建专辑还没推送过照片）→ 视为空目录
+      if (error instanceof BaiduApiError && error.errno === -9) {
+        return { dir, page, hasMore: false, entries: [] };
+      }
+      throw error;
+    }
     return toBaiduDirectoryListing(dir, page, response);
   }
   /** 归一化浏览目录：空 → 浏览根；越出 /apps 一律拒到边界。 */
