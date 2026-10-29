@@ -33,6 +33,13 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, mediaUrl } from "@/lib/api";
 import {
@@ -75,6 +82,8 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   const [showQr, setShowQr] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [viewing, setViewing] = useState<number | null>(null);
+  /** 选中即触发移动后 remount，恢复「移动到…」占位。 */
+  const [moveSelectKey, setMoveSelectKey] = useState(0);
 
   const invalidate = useInvalidateAlbum(albumId);
 
@@ -369,27 +378,27 @@ function AlbumDetail({ albumId }: { albumId: string }) {
             <span className="text-sm text-neutral-400">
               已选 {selected.size} 张
             </span>
-            <select
-              className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-              defaultValue=""
+            <Select
               disabled={batchMoveMutation.isPending}
-              onChange={(event) => {
-                if (event.target.value)
-                  batchMoveMutation.mutate(event.target.value);
-                event.target.value = "";
+              key={moveSelectKey}
+              onValueChange={(targetAlbumId) => {
+                batchMoveMutation.mutate(targetAlbumId);
+                setMoveSelectKey((current) => current + 1);
               }}
             >
-              <option disabled value="">
-                移动到…
-              </option>
-              {albumsQuery.data
-                ?.filter((target) => target.id !== albumId)
-                .map((target) => (
-                  <option key={target.id} value={target.id}>
-                    {target.title}
-                  </option>
-                ))}
-            </select>
+              <SelectTrigger className="w-40">
+                <SelectValue placeholder="移动到…" />
+              </SelectTrigger>
+              <SelectContent>
+                {albumsQuery.data
+                  ?.filter((target) => target.id !== albumId)
+                  .map((target) => (
+                    <SelectItem key={target.id} value={target.id}>
+                      {target.title}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
             <Button
               disabled={batchDeleteMutation.isPending}
               onClick={() => {

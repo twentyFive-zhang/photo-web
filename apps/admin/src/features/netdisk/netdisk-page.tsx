@@ -35,6 +35,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { apiFetch } from "@/lib/api";
 import { AdminShell } from "@/lib/shell";
 import { baiduStatusQuery } from "../albums/baidu-import-dialog";
@@ -566,20 +573,18 @@ function AlbumPickerDialog(props: {
             项，文件夹由服务端展开）导入到目标专辑；导入成功后自动标记为已同步。
           </DialogDescription>
         </DialogHeader>
-        <select
-          className="h-9 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 text-sm outline-none focus:border-neutral-400"
-          onChange={(event) => setAlbumId(event.target.value)}
-          value={albumId}
-        >
-          <option disabled value="">
-            选择目标专辑…
-          </option>
-          {albums.map((album) => (
-            <option key={album.id} value={album.id}>
-              {album.title}（{album.photoCount} 张）
-            </option>
-          ))}
-        </select>
+        <Select onValueChange={setAlbumId} value={albumId || undefined}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="选择目标专辑…" />
+          </SelectTrigger>
+          <SelectContent>
+            {albums.map((album) => (
+              <SelectItem key={album.id} value={album.id}>
+                {album.title}（{album.photoCount} 张）
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <DialogFooter>
           <Button
             onClick={() => onOpenChange(false)}
