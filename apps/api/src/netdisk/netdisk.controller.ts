@@ -69,6 +69,16 @@ export class NetdiskController {
     };
   }
 
+  /** 站内已导入照片的网盘 fsid 集合（浏览页做「已导入/未导入」对照）。 */
+  @Get("synced-fsids")
+  async syncedFsids(): Promise<{ fsids: string[] }> {
+    const photos = await this.prisma.photo.findMany({
+      where: { netdiskFsId: { not: null } },
+      select: { netdiskFsId: true },
+    });
+    return { fsids: photos.map((photo) => photo.netdiskFsId ?? "") };
+  }
+
   @Post("scan")
   @HttpCode(HttpStatus.OK)
   async scan(): Promise<{ queued: boolean }> {

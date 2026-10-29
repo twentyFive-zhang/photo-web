@@ -1,6 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { FolderOpen, LogOut, Settings, Smartphone, Star } from "lucide-react";
+import {
+  Cloud,
+  FolderOpen,
+  LogOut,
+  Settings,
+  Smartphone,
+  Star,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { AdminQrDialog } from "../features/albums/qr-dialog.jsx";
 import { apiFetch } from "./api.js";
@@ -40,6 +47,13 @@ export function AdminShell({ children }: { children: ReactNode }) {
             >
               <Star size={15} />
               精选
+            </Link>
+            <Link
+              className="flex items-center gap-1.5 text-sm text-neutral-400 hover:text-white"
+              to="/netdisk"
+            >
+              <Cloud size={15} />
+              网盘
             </Link>
             <Link
               className="flex items-center gap-1.5 text-sm text-neutral-400 hover:text-white"

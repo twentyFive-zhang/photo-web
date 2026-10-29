@@ -534,6 +534,14 @@ export function buildOpenApiDocument(): OpenApiDocument {
     responses: ok(netdiskStatus, "同步状态"),
   });
   registry.registerPath({
+    method: "get",
+    path: "/api/admin/netdisk/synced-fsids",
+    summary: "站内已导入照片的网盘 fsid 集合（浏览页对照标注用）",
+    tags: ["netdisk"],
+    security,
+    responses: ok(z.object({ fsids: z.array(z.string()) }), "fsid 列表"),
+  });
+  registry.registerPath({
     method: "post",
     path: "/api/admin/netdisk/scan",
     summary: "手动触发下行扫描（新文件夹自动建专辑并导入，缺失仅报告）",

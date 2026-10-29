@@ -64,6 +64,7 @@ export {
   netdiskScanReportSchema,
   netdiskScanTriggeredSchema,
   netdiskStatusSchema,
+  sanitizeNetdiskName,
 } from "./netdisk.js";
 export type {
   BatchDeletePhotosInput,

@@ -14,6 +14,7 @@ import { AlbumDetailPage } from "./features/albums/album-detail-page.js";
 import { AlbumsPage } from "./features/albums/albums-page.js";
 import { LoginPage, RequireAuth } from "./features/auth/login-page.js";
 import { FeaturedPage } from "./features/featured/featured-page.js";
+import { NetdiskPage } from "./features/netdisk/netdisk-page.js";
 import { SettingsPage } from "./features/settings/settings-page.js";
 import "./index.css";
 
@@ -65,6 +66,16 @@ const featuredRoute = createRoute({
   ),
 });
 
+const netdiskRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/netdisk",
+  component: () => (
+    <RequireAuth>
+      <NetdiskPage />
+    </RequireAuth>
+  ),
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
@@ -81,6 +92,7 @@ const routeTree = rootRoute.addChildren([
   albumsRoute,
   albumDetailRoute,
   featuredRoute,
+  netdiskRoute,
   settingsRoute,
 ]);
 
