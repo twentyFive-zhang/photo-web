@@ -82,6 +82,7 @@
 - 生产运行时 Node 24 LTS；镜像 `node:24-bookworm-slim`；Bun 只做包管理/脚本。
 - 代码仓库/CI 计划：GitHub + GitHub Actions + 腾讯云 TCR + SSH；尚未配置 remote/CI。
 - 工具链：Biome；第一版不引入测试框架；Vitest/Playwright 以后再加。
+- 相对导入后缀约定（2026-10-29 确认并已加 lint 把关）：admin/web（bundler 解析）不写后缀；api/shared（Node ESM，tsc 编译 + node 直跑）必须写 `.js`。详见 `AGENTS.md`「相对导入的文件后缀」——机制决定，不是风格偏好。
 
 ## 4. 里程碑状态
 
@@ -181,6 +182,8 @@ M2 认证 + 内容 CRUD、M3 上传 + 展示纵向切片、M4 后台完整 + 前
 - **导入操作**（站内方向，修复而非破坏镜像）：图片文件勾选多选 → 选目标专辑 → 复用 `POST /admin/imports/baidu`（进度横幅同款）；文件夹行「导入此文件夹」按钮 → 后端递归展开（≤500 张）
 
 实现要点：树状态以 `Record<dir, NodeState>` 前端缓存（闭包式 `renderRow` 递归渲染）；对照数据来自新端点 `GET /admin/netdisk/synced-fsids` + 专辑列表（目录名经 `sanitizeNetdiskName` 归一匹配）；缩略图加载失败降级为占位图标；未连接网盘时引导至站点设置。已对真实网盘完成 API 级验收（根目录列表、子目录图片 fsid 对照、缩略图可用）。
+
+浏览器验收中修复的三处页面 bug：根目录需挂载时主动加载（根无可点行）；树节点必须按请求的 dir 作键（服务端会把空 dir 归一化成应用根路径，用 `listing.dir` 作键导致树永不渲染）；AdminShell 不能内外包两层（双 header）。另：导入进度横幅全部成功后 3 秒自动收起，失败/部分失败保留（重试与错误详情需要）。
 
 ## 5. 仓库结构与命令
 
