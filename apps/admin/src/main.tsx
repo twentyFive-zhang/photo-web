@@ -10,12 +10,12 @@ import {
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Toaster } from "sonner";
-import { AlbumDetailPage } from "./features/albums/album-detail-page.js";
-import { AlbumsPage } from "./features/albums/albums-page.js";
-import { LoginPage, RequireAuth } from "./features/auth/login-page.js";
-import { FeaturedPage } from "./features/featured/featured-page.js";
-import { NetdiskPage } from "./features/netdisk/netdisk-page.js";
-import { SettingsPage } from "./features/settings/settings-page.js";
+import { AlbumDetailPage } from "./features/albums/album-detail-page";
+import { AlbumsPage } from "./features/albums/albums-page";
+import { LoginPage, RequireAuth } from "./features/auth/login-page";
+import { FeaturedPage } from "./features/featured/featured-page";
+import { NetdiskPage } from "./features/netdisk/netdisk-page";
+import { SettingsPage } from "./features/settings/settings-page";
 import "./index.css";
 
 const queryClient = new QueryClient();

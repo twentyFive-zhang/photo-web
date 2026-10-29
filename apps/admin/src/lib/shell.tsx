@@ -9,8 +9,8 @@ import {
   Star,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
-import { AdminQrDialog } from "../features/albums/qr-dialog.jsx";
-import { apiFetch } from "./api.js";
+import { AdminQrDialog } from "../features/albums/qr-dialog";
+import { apiFetch } from "./api";
 
 export function useLogoutMutation() {
   const navigate = useNavigate();

@@ -18,17 +18,17 @@ import {
 } from "lucide-react";
 import { type ChangeEvent, type FormEvent, useRef, useState } from "react";
 import { toast } from "sonner";
-import { PhotoLightbox } from "../../components/photo-lightbox.jsx";
-import { apiFetch, mediaUrl } from "../../lib/api.js";
+import { PhotoLightbox } from "../../components/photo-lightbox";
+import { apiFetch, mediaUrl } from "../../lib/api";
 import {
   AdminShell,
   type AlbumPhotoRow,
   useFeaturedIds,
   useInvalidateAlbum,
-} from "../../lib/shell.js";
-import { BaiduImportDialog } from "./baidu-import-dialog.jsx";
-import { ImportJobBanner } from "./import-job-banner.jsx";
-import { QrDialog } from "./qr-dialog.jsx";
+} from "../../lib/shell";
+import { BaiduImportDialog } from "./baidu-import-dialog";
+import { ImportJobBanner } from "./import-job-banner";
+import { QrDialog } from "./qr-dialog";
 
 function thumbUrl(photo: AlbumPhotoRow): string | null {
   const thumb = photo.renditions.find((r) => r.variant === "THUMB");

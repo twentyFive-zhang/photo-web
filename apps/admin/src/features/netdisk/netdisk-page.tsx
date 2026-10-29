@@ -24,10 +24,10 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
-import { PhotoLightbox } from "../../components/photo-lightbox.jsx";
-import { apiFetch } from "../../lib/api.js";
-import { AdminShell } from "../../lib/shell.js";
-import { baiduStatusQuery } from "../albums/baidu-import-dialog.jsx";
+import { PhotoLightbox } from "../../components/photo-lightbox";
+import { apiFetch } from "../../lib/api";
+import { AdminShell } from "../../lib/shell";
+import { baiduStatusQuery } from "../albums/baidu-import-dialog";
 
 /** 只导入图片：与后端 isImportableImage 同判据（category===3 为主，扩展名兜底）。 */
 const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "webp"]);
@@ -97,6 +97,7 @@ function NetdiskBrowser() {
   );
 
   // 挂载且已连接后拉取根目录（根没有可点的行，必须主动加载）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在连接状态翻转时拉一次；fetchIntoTree 是闭包函数，入依赖会每次渲染重新触发
   useEffect(() => {
     if (statusQuery.data?.connected) void fetchIntoTree("", 1, false);
   }, [statusQuery.data?.connected]);

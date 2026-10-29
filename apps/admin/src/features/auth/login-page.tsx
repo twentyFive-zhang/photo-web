@@ -2,7 +2,7 @@ import type { Admin, LoginInput } from "@photo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, type ReactNode, useState } from "react";
-import { ApiError, apiFetch } from "../../lib/api.js";
+import { ApiError, apiFetch } from "../../lib/api";
 
 export function useMeQuery() {
   return useQuery({

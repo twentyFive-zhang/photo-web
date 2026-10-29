@@ -3,7 +3,7 @@ import { Copy, Download, ExternalLink, X } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { copyText } from "../../lib/clipboard.js";
+import { copyText } from "../../lib/clipboard";
 
 /**
  * 二维码里用的前台地址：

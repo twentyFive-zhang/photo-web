@@ -21,3 +21,15 @@
 
 - Lint/格式化统一 Biome，不为 React 19 规则引入 ESLint（Biome 暂无 forwardRef 规则，靠本约定 + code review 执行）。
 - 共享依赖版本在根 `package.json` 的 `catalog` 中单点管理，子包用 `catalog:` 引用；版本升级是显式动作。
+
+## 相对导入的文件后缀
+
+两类包，两种写法，都不是风格偏好而是模块解析机制决定的：
+
+- **`apps/admin`、`apps/web`（bundler 解析，Vite/Next）**：相对导入**不写** `.js`/`.jsx` 后缀（`import { X } from "../lib/api"`）。
+- **`apps/api`、`packages/shared`（Node ESM，`tsc` 编译后 `node` 直跑）**：相对导入**必须写** `.js` 后缀（`import { X } from "./foo.js"` 指向 `foo.ts` 源文件）——TS 不改写 import 路径，漏写会在 dist 运行时报 `ERR_MODULE_NOT_FOUND`。
+
+防回归机制（双向把关，随 `bun run lint` 执行）：
+
+- admin/web 侧多写后缀：`scripts/check-import-extensions.ts` 报错（Biome 无「禁止后缀」的现成规则，故用脚本）。
+- api/shared 侧漏写后缀：`biome.json` overrides 中 `useImportExtensions` + `forceJsExtensions: true` 报错。

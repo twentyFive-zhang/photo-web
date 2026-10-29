@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { apiFetch } from "../../lib/api.js";
+import { apiFetch } from "../../lib/api";
 
 /** 浏览根目录：2026-06 后创建的应用只能访问 /apps/{应用名}/。 */
 const BROWSE_ROOT = "/apps";

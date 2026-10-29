@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, CloudUpload, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { apiFetch } from "../../lib/api.js";
+import { apiFetch } from "../../lib/api";
 
 const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
 
@@ -43,7 +43,9 @@ export function ImportJobBanner({ albumId }: { albumId: string }) {
   // 全部成功后短暂展示「导入完成」再自动收起；失败态保留（重试/详情要看）
   const [dismissed, setDismissed] = useState(false);
   const jobId = job?.id;
-  useEffect(() => setDismissed(false), [jobId]);
+  useEffect(() => {
+    if (jobId) setDismissed(false);
+  }, [jobId]);
   useEffect(() => {
     if (job?.status !== "SUCCEEDED") return;
     const timer = setTimeout(() => setDismissed(true), 3000);

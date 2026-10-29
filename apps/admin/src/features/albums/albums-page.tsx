@@ -4,8 +4,8 @@ import { Link } from "@tanstack/react-router";
 import { FolderOpen, Plus } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
-import { apiFetch } from "../../lib/api.js";
-import { AdminShell } from "../../lib/shell.js";
+import { apiFetch } from "../../lib/api";
+import { AdminShell } from "../../lib/shell";
 
 export function AlbumsPage() {
   const queryClient = useQueryClient();

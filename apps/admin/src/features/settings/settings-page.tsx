@@ -15,8 +15,8 @@ import {
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
-import { apiFetch, mediaUrl } from "../../lib/api.js";
-import { AdminShell } from "../../lib/shell.js";
+import { apiFetch, mediaUrl } from "../../lib/api";
+import { AdminShell } from "../../lib/shell";
 
 interface SocialLinkDraft {
   label: string;

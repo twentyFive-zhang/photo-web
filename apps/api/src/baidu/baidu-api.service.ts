@@ -300,7 +300,6 @@ export class BaiduApiService {
   private async postForm(
     query: URLSearchParams,
     body: URLSearchParams,
-    context: string,
   ): Promise<Response> {
     return fetch(`${PAN_BASE}/rest/2.0/xpan/file?${query.toString()}`, {
       method: "POST",
@@ -337,7 +336,7 @@ export class BaiduApiService {
       "slice-md5": input.sliceMd5,
       rtype: "3",
     });
-    const response = await this.postForm(query, body, "上传预创建");
+    const response = await this.postForm(query, body); // 上传预创建
     const data = (await response.json()) as BaiduPrecreateResponse;
     assertOk(data.errno, "上传预创建");
     return data;
@@ -402,7 +401,7 @@ export class BaiduApiService {
       uploadid: input.uploadid,
       rtype: "3",
     });
-    const response = await this.postForm(query, body, "提交上传");
+    const response = await this.postForm(query, body); // 提交上传
     const data = (await response.json()) as BaiduCreateResponse;
     assertOk(data.errno, "提交上传");
     if (!data.fs_id) {
@@ -440,7 +439,7 @@ export class BaiduApiService {
       async: opera === "rename" ? "1" : "2",
       filelist,
     });
-    const response = await this.postForm(query, body, "网盘文件管理");
+    const response = await this.postForm(query, body); // 网盘文件管理
     const data = (await response.json()) as BaiduFilemanagerResponse;
     if (data.errno === 111) {
       throw new BaiduApiError("网盘异步任务执行中，稍后重试", 111);
