@@ -1,3 +1,4 @@
+import { zodResolver } from "@hookform/resolvers/zod";
 import type { Album } from "@photo/shared";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
@@ -16,19 +17,40 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type ChangeEvent, type FormEvent, useRef, useState } from "react";
+import { type ChangeEvent, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
 import { toast } from "sonner";
-import { PhotoLightbox } from "../../components/photo-lightbox";
-import { apiFetch, mediaUrl } from "../../lib/api";
+import { z } from "zod";
+import { PhotoLightbox } from "@/components/photo-lightbox";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { apiFetch, mediaUrl } from "@/lib/api";
 import {
   AdminShell,
   type AlbumPhotoRow,
   useFeaturedIds,
   useInvalidateAlbum,
-} from "../../lib/shell";
+} from "@/lib/shell";
 import { BaiduImportDialog } from "./baidu-import-dialog";
 import { ImportJobBanner } from "./import-job-banner";
 import { QrDialog } from "./qr-dialog";
+
+const photoEditSchema = z.object({
+  title: z.string().max(200),
+  caption: z.string().max(2000),
+  tags: z.string(),
+});
+type PhotoEditValues = z.infer<typeof photoEditSchema>;
 
 function thumbUrl(photo: AlbumPhotoRow): string | null {
   const thumb = photo.renditions.find((r) => r.variant === "THUMB");
@@ -267,20 +289,15 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         </div>
         {album && (
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
+            <Button
               onClick={() => setShowQr(true)}
               type="button"
+              variant="outline"
             >
               <QrCode size={15} />
               二维码
-            </button>
-            <button
-              className={
-                album.visibility === "PUBLIC"
-                  ? "flex items-center gap-1.5 rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
-                  : "flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-medium text-black"
-              }
+            </Button>
+            <Button
               disabled={visibilityMutation.isPending}
               onClick={() =>
                 visibilityMutation.mutate(
@@ -288,6 +305,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
                 )
               }
               type="button"
+              variant={album.visibility === "PUBLIC" ? "outline" : "default"}
             >
               {album.visibility === "PUBLIC" ? (
                 <>
@@ -300,7 +318,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
                   发布（公开）
                 </>
               )}
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -310,37 +328,41 @@ function AlbumDetail({ albumId }: { albumId: string }) {
 
       {/* 上传 + 批量操作工具栏 */}
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-neutral-600 px-5 py-2.5 text-sm text-neutral-300 hover:border-neutral-400">
-          <ImagePlus size={15} />
-          {uploadMutation.isPending ? "上传中…" : "上传照片"}
-          <input
-            accept="image/jpeg,image/png,image/webp"
-            className="hidden"
-            multiple
-            onChange={handleFilesSelected}
-            ref={fileInputRef}
-            type="file"
-          />
-        </label>
+        <Button asChild className="border-dashed" variant="outline">
+          <label className="cursor-pointer">
+            <ImagePlus size={15} />
+            {uploadMutation.isPending ? "上传中…" : "上传照片"}
+            <input
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              multiple
+              onChange={handleFilesSelected}
+              ref={fileInputRef}
+              type="file"
+            />
+          </label>
+        </Button>
 
-        <button
-          className="flex items-center gap-1.5 rounded-full border border-dashed border-neutral-600 px-5 py-2.5 text-sm text-neutral-300 hover:border-neutral-400"
+        <Button
+          className="border-dashed"
           onClick={() => setShowImport(true)}
           type="button"
+          variant="outline"
         >
           <CloudDownload size={15} />
           从网盘导入
-        </button>
+        </Button>
 
-        <button
-          className="flex items-center gap-1.5 rounded-full border border-dashed border-neutral-600 px-5 py-2.5 text-sm text-neutral-300 hover:border-neutral-400"
+        <Button
+          className="border-dashed"
           disabled={pushAlbumMutation.isPending}
           onClick={() => pushAlbumMutation.mutate()}
           type="button"
+          variant="outline"
         >
           <CloudUpload size={15} />
           {pushAlbumMutation.isPending ? "入队中…" : "同步到网盘"}
-        </button>
+        </Button>
 
         {selected.size > 0 && (
           <>
@@ -368,8 +390,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
                   </option>
                 ))}
             </select>
-            <button
-              className="flex items-center gap-1.5 rounded-full border border-red-900 px-4 py-2 text-sm text-red-300 hover:border-red-500"
+            <Button
               disabled={batchDeleteMutation.isPending}
               onClick={() => {
                 if (confirm(`确定删除选中的 ${selected.size} 张照片？`)) {
@@ -377,39 +398,37 @@ function AlbumDetail({ albumId }: { albumId: string }) {
                 }
               }}
               type="button"
+              variant="destructive"
             >
               <Trash2 size={15} />
               批量删除
-            </button>
-            <button
-              className="flex items-center gap-1 text-sm text-neutral-500 hover:text-white"
+            </Button>
+            <Button
               onClick={() => setSelected(new Set())}
               type="button"
+              variant="ghost"
             >
               <X size={14} />
               清除选择
-            </button>
+            </Button>
           </>
         )}
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
 
-      {/* 专辑二维码弹窗（公开链接 + 分享链接） */}
-      {showQr && album && (
-        <QrDialog album={album} onClose={() => setShowQr(false)} />
+      {album && (
+        <QrDialog album={album} onOpenChange={setShowQr} open={showQr} />
       )}
 
-      {/* 百度网盘导入弹窗 */}
-      {showImport && (
-        <BaiduImportDialog
-          albumId={albumId}
-          onClose={() => setShowImport(false)}
-          onImported={() => {
-            setShowImport(false);
-            invalidate();
-          }}
-        />
-      )}
+      <BaiduImportDialog
+        albumId={albumId}
+        onImported={() => {
+          setShowImport(false);
+          invalidate();
+        }}
+        onOpenChange={setShowImport}
+        open={showImport}
+      />
 
       {/* 大图灯箱 */}
       {viewing !== null && (
@@ -483,73 +502,88 @@ function AlbumDetail({ albumId }: { albumId: string }) {
               </label>
 
               {isCover && (
-                <span className="absolute top-2 right-2 rounded-full bg-white/90 px-2 py-0.5 text-xs font-medium text-black">
+                <Badge className="absolute top-2 right-2" variant="secondary">
                   封面
-                </span>
+                </Badge>
               )}
 
               {/* 操作按钮：手机无常显 hover，小屏直接展示 */}
               <div className="absolute inset-x-0 bottom-0 flex flex-wrap gap-1 bg-black/70 p-2 sm:hidden sm:group-hover:flex">
-                <SmallButton
+                <Button
                   aria-label="上移"
+                  className="rounded border border-neutral-600 px-1.5 py-0.5"
                   disabled={index === 0}
                   onClick={() => move(photo.id, -1)}
+                  size="sm"
+                  type="button"
+                  variant="outline"
                 >
                   <ChevronUp size={12} />
-                </SmallButton>
-                <SmallButton
+                </Button>
+                <Button
                   aria-label="下移"
+                  className="rounded border border-neutral-600 px-1.5 py-0.5"
                   disabled={index === photos.length - 1}
                   onClick={() => move(photo.id, 1)}
+                  size="sm"
+                  type="button"
+                  variant="outline"
                 >
                   <ChevronDown size={12} />
-                </SmallButton>
-                <SmallButton onClick={() => setEditing(photo)}>
-                  <Pencil size={12} aria-label="编辑" />
-                </SmallButton>
-                <SmallButton
+                </Button>
+                <Button
+                  aria-label="编辑"
+                  className="rounded border border-neutral-600 px-1.5 py-0.5"
+                  onClick={() => setEditing(photo)}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  <Pencil size={12} />
+                </Button>
+                <Button
+                  aria-label="设封面"
+                  className="rounded border border-neutral-600 px-1.5 py-0.5"
                   disabled={isCover}
                   onClick={() => coverMutation.mutate(photo.id)}
+                  size="sm"
+                  type="button"
+                  variant="outline"
                 >
-                  <Crown size={12} aria-label="设封面" />
-                </SmallButton>
-                <SmallButton
+                  <Crown size={12} />
+                </Button>
+                <Button
+                  aria-label="入精选"
+                  className="rounded border border-neutral-600 px-1.5 py-0.5"
                   disabled={featuredIds.has(photo.id)}
                   onClick={() => addFeaturedMutation.mutate(photo.id)}
+                  size="sm"
+                  type="button"
+                  variant="outline"
                 >
-                  <Star size={12} aria-label="入精选" />
-                </SmallButton>
-                <SmallButton
+                  <Star size={12} />
+                </Button>
+                <Button
+                  aria-label="删除"
+                  className="rounded border border-neutral-600 px-1.5 py-0.5"
                   disabled={deleteMutation.isPending}
                   onClick={() => {
                     if (confirm("确定删除这张照片？")) {
                       deleteMutation.mutate(photo.id);
                     }
                   }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
                 >
-                  <Trash2 size={12} aria-label="删除" />
-                </SmallButton>
+                  <Trash2 size={12} />
+                </Button>
               </div>
             </li>
           );
         })}
       </ul>
     </main>
-  );
-}
-
-function SmallButton({
-  children,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      className="rounded border border-neutral-600 px-1.5 py-0.5 text-xs text-neutral-200 hover:border-neutral-300 disabled:opacity-40"
-      type="button"
-      {...props}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -562,10 +596,16 @@ function PhotoEditPanel({
   onSaved: () => void;
   onCancel: () => void;
 }) {
-  const [title, setTitle] = useState(photo.title ?? "");
-  const [caption, setCaption] = useState(photo.caption ?? "");
-  const [tags, setTags] = useState(photo.tags.map((tag) => tag.name).join(" "));
-  const [error, setError] = useState<string | null>(null);
+  const [serverError, setServerError] = useState<string | null>(null);
+
+  const form = useForm<PhotoEditValues>({
+    resolver: zodResolver(photoEditSchema),
+    defaultValues: {
+      title: photo.title ?? "",
+      caption: photo.caption ?? "",
+      tags: photo.tags.map((tag) => tag.name).join(" "),
+    },
+  });
 
   const updateMutation = useMutation({
     mutationFn: (input: { title: string | null; caption: string | null }) =>
@@ -573,7 +613,6 @@ function PhotoEditPanel({
         method: "PATCH",
         body: JSON.stringify(input),
       }),
-    onError: (err) => setError(err.message),
   });
 
   const tagsMutation = useMutation({
@@ -582,88 +621,88 @@ function PhotoEditPanel({
         method: "PUT",
         body: JSON.stringify({ names }),
       }),
-    onError: (err) => setError(err.message),
   });
 
-  function handleSave(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    const titleValue = title.trim() || null;
-    const captionValue = caption.trim() || null;
-    const names = tags.split(/\s+/).filter(Boolean);
-
-    Promise.all([
-      updateMutation.mutateAsync({
-        title: titleValue,
-        caption: captionValue,
-      }),
-      tagsMutation.mutateAsync(names),
-    ])
-      .then(() => {
-        toast.success("照片已保存");
-        onSaved();
-      })
-      .catch(() => {
-        setError("保存失败，请重试");
-        toast.error("保存失败，请重试");
-      });
-  }
+  const saving = updateMutation.isPending || tagsMutation.isPending;
 
   return (
-    <form
-      className="space-y-4 rounded-2xl border border-neutral-800 p-5"
-      onSubmit={handleSave}
-    >
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium text-neutral-300">
-          编辑照片 <span className="text-neutral-600">{photo.publicId}</span>
-        </h2>
-        <button
-          className="text-sm text-neutral-500 hover:text-white"
-          onClick={onCancel}
-          type="button"
-        >
-          取消
-        </button>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="block space-y-1.5">
-          <span className="text-sm text-neutral-400">标题</span>
-          <input
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-            maxLength={200}
-            onChange={(event) => setTitle(event.target.value)}
-            value={title}
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-sm text-neutral-400">标签（空格分隔）</span>
-          <input
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-            onChange={(event) => setTags(event.target.value)}
-            placeholder="风景 街拍"
-            value={tags}
-          />
-        </label>
-      </div>
-      <label className="block space-y-1.5">
-        <span className="text-sm text-neutral-400">说明</span>
-        <textarea
-          className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-          maxLength={2000}
-          onChange={(event) => setCaption(event.target.value)}
-          rows={3}
-          value={caption}
-        />
-      </label>
-      {error && <p className="text-sm text-red-400">{error}</p>}
-      <button
-        className="rounded-full bg-white px-5 py-2 text-sm font-medium text-black disabled:opacity-50"
-        disabled={updateMutation.isPending || tagsMutation.isPending}
-        type="submit"
+    <Form {...form}>
+      <form
+        className="space-y-4 rounded-2xl border border-neutral-800 p-5"
+        onSubmit={form.handleSubmit(async (values) => {
+          setServerError(null);
+          try {
+            await Promise.all([
+              updateMutation.mutateAsync({
+                title: values.title.trim() || null,
+                caption: values.caption.trim() || null,
+              }),
+              tagsMutation.mutateAsync(
+                values.tags.split(/\s+/).filter(Boolean),
+              ),
+            ]);
+            toast.success("照片已保存");
+            onSaved();
+          } catch {
+            setServerError("保存失败，请重试");
+            toast.error("保存失败，请重试");
+          }
+        })}
       >
-        保存
-      </button>
-    </form>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium text-neutral-300">
+            编辑照片 <span className="text-neutral-600">{photo.publicId}</span>
+          </h2>
+          <Button onClick={onCancel} type="button" variant="ghost">
+            取消
+          </Button>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField
+            control={form.control}
+            name="title"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>标题</FormLabel>
+                <FormControl>
+                  <Input maxLength={200} {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="tags"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>标签（空格分隔）</FormLabel>
+                <FormControl>
+                  <Input placeholder="风景 街拍" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+        <FormField
+          control={form.control}
+          name="caption"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>说明</FormLabel>
+              <FormControl>
+                <Textarea maxLength={2000} rows={3} {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        {serverError && <p className="text-sm text-red-400">{serverError}</p>}
+        <Button disabled={saving} type="submit">
+          保存
+        </Button>
+      </form>
+    </Form>
   );
 }

@@ -12,11 +12,17 @@ import {
   ImageDown,
   Image as ImageIcon,
   Link2,
-  X,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { apiFetch } from "../../lib/api";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { apiFetch } from "@/lib/api";
 
 /** 浏览根目录：2026-06 后创建的应用只能访问 /apps/{应用名}/。 */
 const BROWSE_ROOT = "/apps";
@@ -33,36 +39,26 @@ export const baiduStatusQuery = {
  */
 export function BaiduImportDialog({
   albumId,
-  onClose,
+  open,
+  onOpenChange,
   onImported,
 }: {
   albumId: string;
-  onClose: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onImported: () => void;
 }) {
-  const statusQuery = useQuery(baiduStatusQuery);
+  const statusQuery = useQuery({
+    ...baiduStatusQuery,
+    enabled: open,
+  });
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: 弹窗遮罩点击关闭，关闭有按钮
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 sm:p-6"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-      role="dialog"
-    >
-      <div className="max-h-[85vh] w-full max-w-2xl space-y-4 overflow-auto rounded-2xl border border-neutral-800 bg-neutral-950 p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">从百度网盘导入</h2>
-          <button
-            aria-label="关闭"
-            className="rounded-full border border-neutral-700 p-1.5 text-neutral-400 hover:border-neutral-400 hover:text-white"
-            onClick={onClose}
-            type="button"
-          >
-            <X size={14} />
-          </button>
-        </div>
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="max-h-[85vh] max-w-2xl overflow-auto">
+        <DialogHeader>
+          <DialogTitle>从百度网盘导入</DialogTitle>
+        </DialogHeader>
 
         {statusQuery.isPending && (
           <p className="text-sm text-neutral-400">加载中…</p>
@@ -74,8 +70,8 @@ export function BaiduImportDialog({
             status={statusQuery.data}
           />
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -112,13 +108,12 @@ function ImportBody({
           首次使用需要授权访问你的百度网盘（scope: basic,netdisk）。
           授权仅用于读取网盘文件导入到本站，不会修改网盘内容。
         </p>
-        <a
-          className="inline-flex items-center gap-1.5 rounded-full bg-white px-5 py-2 text-sm font-medium text-black hover:bg-neutral-200"
-          href="/api/admin/baidu/authorize"
-        >
-          <Link2 size={15} />
-          连接百度网盘
-        </a>
+        <Button asChild>
+          <a href="/api/admin/baidu/authorize">
+            <Link2 size={15} />
+            连接百度网盘
+          </a>
+        </Button>
       </div>
     );
   }
@@ -270,23 +265,25 @@ function BaiduBrowser({
 
       {(filesQuery.data?.hasMore || page > 1) && (
         <div className="flex items-center justify-between text-sm text-neutral-400">
-          <button
-            className="rounded-full border border-neutral-700 px-3 py-1 hover:border-neutral-400 disabled:opacity-40"
+          <Button
             disabled={page <= 1 || filesQuery.isPending}
             onClick={() => setPage((current) => Math.max(1, current - 1))}
+            size="sm"
             type="button"
+            variant="outline"
           >
             上一页
-          </button>
+          </Button>
           <span>第 {page} 页</span>
-          <button
-            className="rounded-full border border-neutral-700 px-3 py-1 hover:border-neutral-400 disabled:opacity-40"
+          <Button
             disabled={!filesQuery.data?.hasMore || filesQuery.isPending}
             onClick={() => setPage((current) => current + 1)}
+            size="sm"
             type="button"
+            variant="outline"
           >
             下一页
-          </button>
+          </Button>
         </div>
       )}
 
@@ -299,23 +296,22 @@ function BaiduBrowser({
 
       <div className="flex items-center justify-end gap-2">
         {selected.size > 0 && (
-          <button
-            className="text-sm text-neutral-500 hover:text-white"
+          <Button
             onClick={() => setSelected(new Map())}
             type="button"
+            variant="ghost"
           >
             清除选择
-          </button>
+          </Button>
         )}
-        <button
-          className="flex items-center gap-1.5 rounded-full bg-white px-5 py-2 text-sm font-medium text-black disabled:opacity-40"
+        <Button
           disabled={selected.size === 0 || importMutation.isPending}
           onClick={startImport}
           type="button"
         >
           <ImageDown size={15} />
           {importMutation.isPending ? "创建中…" : "开始导入"}
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -1,9 +1,18 @@
 import type { Album } from "@photo/shared";
-import { Copy, Download, ExternalLink, X } from "lucide-react";
+import { Copy, Download, ExternalLink } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { copyText } from "../../lib/clipboard";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { copyText } from "@/lib/clipboard";
 
 /**
  * 二维码里用的前台地址：
@@ -60,99 +69,90 @@ function QrCard({
   }, [url]);
 
   return (
-    <div className="flex-1 space-y-3 rounded-2xl border border-neutral-800 p-5 text-center">
-      <h3 className="text-sm font-medium text-neutral-300">{label}</h3>
-      {dataUrl ? (
-        // biome-ignore lint/performance/noImgElement: data URL 由 qrcode 库本地生成，不走 next/image
-        <img
-          alt={`${label}二维码`}
-          className="mx-auto w-48 rounded-lg bg-white p-2"
-          src={dataUrl}
-        />
-      ) : (
-        <div className="flex h-48 items-center justify-center text-sm text-neutral-600">
-          生成中…
+    <Card className="flex-1">
+      <CardContent className="space-y-3 text-center">
+        <h3 className="text-sm font-medium text-neutral-300">{label}</h3>
+        {dataUrl ? (
+          // biome-ignore lint/performance/noImgElement: data URL 由 qrcode 库本地生成，不走 next/image
+          <img
+            alt={`${label}二维码`}
+            className="mx-auto w-48 rounded-lg bg-white p-2"
+            src={dataUrl}
+          />
+        ) : (
+          <div className="flex h-48 items-center justify-center text-sm text-neutral-600">
+            生成中…
+          </div>
+        )}
+        <a
+          className="flex items-center justify-center gap-1 text-xs break-all text-neutral-500 hover:text-neutral-300"
+          href={url}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          {url}
+          <ExternalLink size={11} className="shrink-0" />
+        </a>
+        <div className="flex justify-center gap-2">
+          <Button
+            onClick={async () => {
+              if (await copyText(url)) {
+                setCopied(true);
+                toast.success("链接已复制");
+                setTimeout(() => setCopied(false), 1500);
+              } else {
+                toast.error("复制失败，请手动长按链接复制");
+              }
+            }}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Copy size={12} />
+            {copied ? "已复制" : "复制链接"}
+          </Button>
+          <Button
+            disabled={!dataUrl}
+            onClick={() => dataUrl && downloadDataUrl(dataUrl, filename)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Download size={12} />
+            下载 PNG
+          </Button>
         </div>
-      )}
-      <a
-        className="flex items-center justify-center gap-1 text-xs break-all text-neutral-500 hover:text-neutral-300"
-        href={url}
-        rel="noopener noreferrer"
-        target="_blank"
-      >
-        {url}
-        <ExternalLink size={11} className="shrink-0" />
-      </a>
-      <div className="flex justify-center gap-2">
-        <button
-          className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-400"
-          onClick={async () => {
-            if (await copyText(url)) {
-              setCopied(true);
-              toast.success("链接已复制");
-              setTimeout(() => setCopied(false), 1500);
-            } else {
-              toast.error("复制失败，请手动长按链接复制");
-            }
-          }}
-          type="button"
-        >
-          <Copy size={12} />
-          {copied ? "已复制" : "复制链接"}
-        </button>
-        <button
-          className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-400 disabled:opacity-40"
-          disabled={!dataUrl}
-          onClick={() => dataUrl && downloadDataUrl(dataUrl, filename)}
-          type="button"
-        >
-          <Download size={12} />
-          下载 PNG
-        </button>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
 export function QrDialog({
   album,
-  onClose,
+  open,
+  onOpenChange,
 }: {
   album: Album;
-  onClose: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const base = webBaseUrl();
   const publicUrl = `${base}/albums/${album.publicId}`;
   const shareUrl = `${base}/s/${album.shareToken}`;
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: 弹窗遮罩点击关闭，关闭有按钮
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-      role="dialog"
-    >
-      <div className="w-full max-w-xl space-y-4 rounded-2xl border border-neutral-800 bg-neutral-950 p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">专辑二维码</h2>
-          <button
-            aria-label="关闭"
-            className="rounded-full border border-neutral-700 p-1.5 text-neutral-400 hover:border-neutral-400 hover:text-white"
-            onClick={onClose}
-            type="button"
-          >
-            <X size={14} />
-          </button>
-        </div>
-        <p className="text-xs text-neutral-500">
-          手机连同一 Wi-Fi 后扫码打开；地址 = 前台地址（
-          {import.meta.env.VITE_PUBLIC_BASE_URL
-            ? "VITE_PUBLIC_BASE_URL"
-            : "当前访问域名"}
-          ）。
-        </p>
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>专辑二维码</DialogTitle>
+          <DialogDescription>
+            手机连同一 Wi-Fi 后扫码打开；地址 = 前台地址（
+            {import.meta.env.VITE_PUBLIC_BASE_URL
+              ? "VITE_PUBLIC_BASE_URL"
+              : "当前访问域名"}
+            ）。
+          </DialogDescription>
+        </DialogHeader>
         <div className="flex flex-col gap-4 sm:flex-row">
           <QrCard
             filename={`album-${album.publicId}-public.png`}
@@ -165,40 +165,32 @@ export function QrDialog({
             url={shareUrl}
           />
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 /** "手机管理"弹窗：扫码在手机上打开后台。 */
-export function AdminQrDialog({ onClose }: { onClose: () => void }) {
+export function AdminQrDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: 弹窗遮罩点击关闭，关闭有按钮
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-      role="dialog"
-    >
-      <div className="w-full max-w-sm space-y-4 rounded-2xl border border-neutral-800 bg-neutral-950 p-6">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">手机管理</h2>
-          <button
-            aria-label="关闭"
-            className="rounded-full border border-neutral-700 p-1.5 text-neutral-400 hover:border-neutral-400 hover:text-white"
-            onClick={onClose}
-            type="button"
-          >
-            <X size={14} />
-          </button>
-        </div>
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>手机管理</DialogTitle>
+          <DialogDescription>扫码在手机上打开后台管理。</DialogDescription>
+        </DialogHeader>
         <QrCard
           filename="admin-qr.png"
           label="后台管理地址"
           url={`${adminBaseUrl()}/`}
         />
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

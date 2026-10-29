@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useCallback, useEffect } from "react";
+import { Button } from "@/components/ui/button";
 
 export interface LightboxPhoto {
   url: string | null;
@@ -52,28 +53,31 @@ export function PhotoLightbox({
         <span className="text-sm">
           {index + 1} / {photos.length}
         </span>
-        <button
+        <Button
           aria-label="关闭"
-          className="rounded-full border border-neutral-700 p-2 hover:border-neutral-400"
           onClick={onClose}
+          size="icon"
           type="button"
+          variant="outline"
         >
-          <X className="h-4 w-4" size={16} />
-        </button>
+          <X size={16} />
+        </Button>
       </header>
 
       <div className="relative flex flex-1 items-center justify-center px-2 pb-4 sm:px-4 sm:pb-6">
-        <button
+        <Button
           aria-label="上一张"
-          className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full border border-neutral-700 p-2 text-neutral-300 hover:border-neutral-400 sm:left-4"
+          className="absolute left-2 top-1/2 z-10 -translate-y-1/2 sm:left-4"
           onClick={(event) => {
             event.stopPropagation();
             prev();
           }}
+          size="icon"
           type="button"
+          variant="outline"
         >
           <ChevronLeft size={16} />
-        </button>
+        </Button>
         {photo.url && (
           // biome-ignore lint/a11y/noStaticElementInteractions: 点击大图不关闭灯箱（阻止冒泡），关闭有按钮与 Esc
           // biome-ignore lint/performance/noImgElement: 图 URL 来自 API rendition（本地 /media），不走 next/image 优化
@@ -85,17 +89,19 @@ export function PhotoLightbox({
             src={photo.url}
           />
         )}
-        <button
+        <Button
           aria-label="下一张"
-          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full border border-neutral-700 p-2 text-neutral-300 hover:border-neutral-400 sm:right-4"
+          className="absolute right-2 top-1/2 z-10 -translate-y-1/2 sm:right-4"
           onClick={(event) => {
             event.stopPropagation();
             next();
           }}
+          size="icon"
           type="button"
+          variant="outline"
         >
           <ChevronRight size={16} />
-        </button>
+        </Button>
       </div>
 
       {/* biome-ignore lint/a11y/noStaticElementInteractions: 说明区点击不关闭灯箱（阻止冒泡） */}

@@ -1,8 +1,20 @@
-import type { Admin, LoginInput } from "@photo/shared";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { type Admin, type LoginInput, loginInputSchema } from "@photo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, useState } from "react";
-import { ApiError, apiFetch } from "../../lib/api";
+import { type ReactNode, useState } from "react";
+import { useForm } from "react-hook-form";
+import { Button } from "@/components/ui/button";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { ApiError, apiFetch } from "@/lib/api";
 
 export function useMeQuery() {
   return useQuery({
@@ -31,9 +43,12 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 export function LoginPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [serverError, setServerError] = useState<string | null>(null);
+
+  const form = useForm<LoginInput>({
+    resolver: zodResolver(loginInputSchema),
+    defaultValues: { username: "", password: "" },
+  });
 
   const loginMutation = useMutation({
     mutationFn: (input: LoginInput) =>
@@ -46,58 +61,72 @@ export function LoginPage() {
       navigate({ to: "/albums" });
     },
     onError: (err) => {
-      setError(err instanceof ApiError ? err.message : "登录失败，请重试");
+      setServerError(
+        err instanceof ApiError ? err.message : "登录失败，请重试",
+      );
     },
   });
 
-  function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    loginMutation.mutate({ username, password });
-  }
-
   return (
     <main className="flex min-h-screen items-center justify-center p-8">
-      <form
-        className="w-full max-w-sm space-y-5 rounded-2xl border border-neutral-800 p-8"
-        onSubmit={handleSubmit}
-      >
-        <div className="space-y-1">
-          <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">
-            江流儿摄影
-          </p>
-          <h1 className="text-xl font-medium">后台登录</h1>
-        </div>
-        <label className="block space-y-1.5">
-          <span className="text-sm text-neutral-400">用户名</span>
-          <input
-            autoComplete="username"
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm outline-none focus:border-neutral-400"
-            onChange={(event) => setUsername(event.target.value)}
-            required
-            value={username}
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-sm text-neutral-400">密码</span>
-          <input
-            autoComplete="current-password"
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm outline-none focus:border-neutral-400"
-            onChange={(event) => setPassword(event.target.value)}
-            required
-            type="password"
-            value={password}
-          />
-        </label>
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <button
-          className="w-full rounded-full bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
-          disabled={loginMutation.isPending}
-          type="submit"
+      <Form {...form}>
+        <form
+          className="w-full max-w-sm space-y-5 rounded-2xl border border-neutral-800 p-8"
+          onSubmit={form.handleSubmit((values) => {
+            setServerError(null);
+            loginMutation.mutate(values);
+          })}
         >
-          {loginMutation.isPending ? "登录中…" : "登录"}
-        </button>
-      </form>
+          <div className="space-y-1">
+            <p className="text-xs uppercase tracking-[0.3em] text-neutral-500">
+              江流儿摄影
+            </p>
+            <h1 className="text-xl font-medium">后台登录</h1>
+          </div>
+
+          <FormField
+            control={form.control}
+            name="username"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>用户名</FormLabel>
+                <FormControl>
+                  <Input autoComplete="username" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="password"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>密码</FormLabel>
+                <FormControl>
+                  <Input
+                    autoComplete="current-password"
+                    type="password"
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          {serverError && <p className="text-sm text-red-400">{serverError}</p>}
+
+          <Button
+            className="w-full"
+            disabled={loginMutation.isPending}
+            type="submit"
+          >
+            {loginMutation.isPending ? "登录中…" : "登录"}
+          </Button>
+        </form>
+      </Form>
     </main>
   );
 }

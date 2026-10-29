@@ -24,9 +24,19 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
-import { PhotoLightbox } from "../../components/photo-lightbox";
-import { apiFetch } from "../../lib/api";
-import { AdminShell } from "../../lib/shell";
+import { PhotoLightbox } from "@/components/photo-lightbox";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { apiFetch } from "@/lib/api";
+import { AdminShell } from "@/lib/shell";
 import { baiduStatusQuery } from "../albums/baidu-import-dialog";
 
 /** 只导入图片：与后端 isImportableImage 同判据（category===3 为主，扩展名兜底）。 */
@@ -305,23 +315,21 @@ function NetdiskBrowser() {
 
           {entry.isDir ? (
             albumTitle ? (
-              <span className="shrink-0 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-300">
-                专辑：{albumTitle}
-              </span>
+              <Badge className="shrink-0">专辑：{albumTitle}</Badge>
             ) : (
-              <span className="shrink-0 rounded-full border border-neutral-700 px-2 py-0.5 text-xs text-neutral-500">
+              <Badge className="shrink-0" variant="outline">
                 未对应
-              </span>
+              </Badge>
             )
           ) : isImage ? (
             synced ? (
-              <span className="shrink-0 rounded-full bg-emerald-900/60 px-2 py-0.5 text-xs text-emerald-300">
+              <Badge className="shrink-0" variant="success">
                 已导入
-              </span>
+              </Badge>
             ) : (
-              <span className="shrink-0 rounded-full bg-amber-900/60 px-2 py-0.5 text-xs text-amber-300">
+              <Badge className="shrink-0" variant="warning">
                 未导入
-              </span>
+              </Badge>
             )
           ) : null}
 
@@ -332,8 +340,8 @@ function NetdiskBrowser() {
           )}
 
           {entry.isDir && (
-            <button
-              className="shrink-0 rounded-full border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:border-neutral-400"
+            <Button
+              className="shrink-0"
               onClick={(event) => {
                 event.stopPropagation();
                 setImportTarget([
@@ -346,23 +354,27 @@ function NetdiskBrowser() {
                   },
                 ]);
               }}
+              size="sm"
               type="button"
+              variant="outline"
             >
               导入此文件夹
-            </button>
+            </Button>
           )}
           {isImage && lightboxIndex >= 0 && (
-            <button
+            <Button
               aria-label={`预览 ${entry.serverFilename}`}
-              className="shrink-0 text-neutral-500 hover:text-white"
+              className="shrink-0"
               onClick={(event) => {
                 event.stopPropagation();
                 setViewing(lightboxIndex);
               }}
+              size="icon-sm"
               type="button"
+              variant="ghost"
             >
               <ZoomIn size={14} />
-            </button>
+            </Button>
           )}
         </div>
 
@@ -378,14 +390,15 @@ function NetdiskBrowser() {
               </p>
             )}
             {node.hasMore && (
-              <button
-                className="py-2 text-xs text-neutral-400 hover:text-white"
+              <Button
+                className="h-auto py-2 text-xs"
                 onClick={() => loadMore(entry.path)}
                 style={{ paddingLeft: (depth + 1) * 18 + 44 }}
                 type="button"
+                variant="ghost"
               >
                 加载更多…
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -408,12 +421,9 @@ function NetdiskBrowser() {
           <p className="text-sm text-neutral-400">
             尚未连接百度网盘，请先到站点设置完成授权。
           </p>
-          <Link
-            className="inline-block rounded-full bg-white px-4 py-2 text-sm font-medium text-black"
-            to="/settings"
-          >
-            去连接
-          </Link>
+          <Button asChild>
+            <Link to="/settings">去连接</Link>
+          </Button>
         </main>
       </AdminShell>
     );
@@ -431,21 +441,16 @@ function NetdiskBrowser() {
               只读浏览网盘镜像；「导入」= 拉进站内（网盘侧不受影响）
             </p>
           </div>
-          <button
-            className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
-            onClick={refreshAll}
-            type="button"
-          >
+          <Button onClick={refreshAll} type="button" variant="outline">
             <RefreshCw size={14} />
             刷新
-          </button>
+          </Button>
         </div>
 
         {selected.size > 0 && (
           <div className="flex flex-wrap items-center gap-3 rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-3">
             <span className="text-sm">已选 {selected.size} 张未导入照片</span>
-            <button
-              className="rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black"
+            <Button
               onClick={() => {
                 const entries: CreateBaiduImportInput["entries"] = [];
                 for (const path of selected) {
@@ -467,17 +472,18 @@ function NetdiskBrowser() {
                 }
                 setImportTarget(entries);
               }}
+              size="sm"
               type="button"
             >
               导入选中…
-            </button>
-            <button
-              className="text-sm text-neutral-400 hover:text-white"
+            </Button>
+            <Button
               onClick={() => setSelected(new Set())}
               type="button"
+              variant="ghost"
             >
               取消选择
-            </button>
+            </Button>
           </div>
         )}
 
@@ -497,15 +503,17 @@ function NetdiskBrowser() {
         )}
       </main>
 
-      {importTarget && (
-        <AlbumPickerDialog
-          count={importTarget.length}
-          onClose={() => setImportTarget(null)}
-          onSubmit={(albumId, albumTitle) => {
-            createImport.mutate({ albumId, albumTitle, entries: importTarget });
-          }}
-        />
-      )}
+      <AlbumPickerDialog
+        count={importTarget?.length ?? 0}
+        onOpenChange={(open) => {
+          if (!open) setImportTarget(null);
+        }}
+        onSubmit={(albumId, albumTitle) => {
+          if (!importTarget) return;
+          createImport.mutate({ albumId, albumTitle, entries: importTarget });
+        }}
+        open={importTarget !== null}
+      />
       {viewing !== null && visibleImages[viewing] && (
         <PhotoLightbox
           index={viewing}
@@ -525,10 +533,11 @@ function NetdiskBrowser() {
 /** 导入发起：选专辑 → POST /admin/imports/baidu → toast 收尾。 */
 function AlbumPickerDialog(props: {
   count: number;
-  onClose: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onSubmit: (albumId: string, albumTitle: string) => void;
 }) {
-  const { count, onClose, onSubmit } = props;
+  const { count, open, onOpenChange, onSubmit } = props;
   const [albumId, setAlbumId] = useState("");
   const albumsQuery = useQuery({
     queryKey: ["albums"],
@@ -536,27 +545,29 @@ function AlbumPickerDialog(props: {
       apiFetch<{ id: string; title: string; photoCount: number }[]>(
         "/admin/albums",
       ),
+    enabled: open,
   });
   const albums = albumsQuery.data ?? [];
   const chosen = albums.find((album) => album.id === albumId);
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: 弹窗遮罩点击关闭，关闭有按钮
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 sm:p-6"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
+    <Dialog
+      onOpenChange={(next) => {
+        if (!next) setAlbumId("");
+        onOpenChange(next);
       }}
-      role="dialog"
+      open={open}
     >
-      <div className="w-full max-w-md space-y-4 rounded-2xl border border-neutral-800 bg-neutral-950 p-6">
-        <h2 className="text-lg font-medium">导入到专辑</h2>
-        <p className="text-sm text-neutral-400">
-          将所选内容（{count}
-          项，文件夹由服务端展开）导入到目标专辑；导入成功后自动标记为已同步。
-        </p>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>导入到专辑</DialogTitle>
+          <DialogDescription>
+            将所选内容（{count}
+            项，文件夹由服务端展开）导入到目标专辑；导入成功后自动标记为已同步。
+          </DialogDescription>
+        </DialogHeader>
         <select
-          className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
+          className="h-9 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 text-sm outline-none focus:border-neutral-400"
           onChange={(event) => setAlbumId(event.target.value)}
           value={albumId}
         >
@@ -569,24 +580,23 @@ function AlbumPickerDialog(props: {
             </option>
           ))}
         </select>
-        <div className="flex justify-end gap-2">
-          <button
-            className="rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300 hover:border-neutral-400"
-            onClick={onClose}
+        <DialogFooter>
+          <Button
+            onClick={() => onOpenChange(false)}
             type="button"
+            variant="outline"
           >
             取消
-          </button>
-          <button
-            className="rounded-full bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
+          </Button>
+          <Button
             disabled={!albumId}
             onClick={() => chosen && onSubmit(chosen.id, chosen.title)}
             type="button"
           >
             创建导入任务
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

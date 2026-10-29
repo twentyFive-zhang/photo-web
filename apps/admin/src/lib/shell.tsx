@@ -9,7 +9,8 @@ import {
   Star,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
-import { AdminQrDialog } from "../features/albums/qr-dialog";
+import { Button } from "@/components/ui/button";
+import { AdminQrDialog } from "@/features/albums/qr-dialog";
 import { apiFetch } from "./api";
 
 export function useLogoutMutation() {
@@ -63,29 +64,29 @@ export function AdminShell({ children }: { children: ReactNode }) {
               站点设置
             </Link>
           </nav>
-          <div className="flex items-center gap-4">
-            <button
-              className="flex items-center gap-1.5 text-sm text-neutral-400 hover:text-white"
+          <div className="flex items-center gap-2">
+            <Button
               onClick={() => setShowPhoneQr(true)}
               type="button"
+              variant="ghost"
             >
               <Smartphone size={15} />
               手机管理
-            </button>
-            <button
-              className="flex items-center gap-1.5 text-sm text-neutral-500 hover:text-white"
+            </Button>
+            <Button
               disabled={logout.isPending}
               onClick={() => logout.mutate()}
               type="button"
+              variant="ghost"
             >
               <LogOut size={15} />
               退出登录
-            </button>
+            </Button>
           </div>
         </div>
       </header>
       {children}
-      {showPhoneQr && <AdminQrDialog onClose={() => setShowPhoneQr(false)} />}
+      <AdminQrDialog onOpenChange={setShowPhoneQr} open={showPhoneQr} />
     </div>
   );
 }

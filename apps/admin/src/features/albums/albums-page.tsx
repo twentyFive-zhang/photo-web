@@ -1,16 +1,34 @@
-import type { Album } from "@photo/shared";
+import { zodResolver } from "@hookform/resolvers/zod";
+import {
+  type Album,
+  type CreateAlbumInput,
+  createAlbumInputSchema,
+} from "@photo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { FolderOpen, Plus } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { useForm } from "react-hook-form";
 import { toast } from "sonner";
-import { apiFetch } from "../../lib/api";
-import { AdminShell } from "../../lib/shell";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { apiFetch } from "@/lib/api";
+import { AdminShell } from "@/lib/shell";
 
 export function AlbumsPage() {
   const queryClient = useQueryClient();
-  const [title, setTitle] = useState("");
-  const [error, setError] = useState<string | null>(null);
+
+  const form = useForm<CreateAlbumInput>({
+    resolver: zodResolver(createAlbumInputSchema),
+    defaultValues: { title: "" },
+  });
 
   const albumsQuery = useQuery({
     queryKey: ["albums"],
@@ -18,27 +36,20 @@ export function AlbumsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (input: { title: string }) =>
+    mutationFn: (input: CreateAlbumInput) =>
       apiFetch<Album>("/admin/albums", {
         method: "POST",
         body: JSON.stringify(input),
       }),
     onSuccess: (album) => {
-      setTitle("");
+      form.reset({ title: "" });
       toast.success(`专辑「${album.title}」已创建`);
       queryClient.invalidateQueries({ queryKey: ["albums"] });
     },
     onError: (err) => {
-      setError(err.message);
       toast.error(err.message);
     },
   });
-
-  function handleCreate(event: FormEvent) {
-    event.preventDefault();
-    if (!title.trim()) return;
-    createMutation.mutate({ title: title.trim() });
-  }
 
   return (
     <AdminShell>
@@ -48,27 +59,35 @@ export function AlbumsPage() {
           专辑
         </h1>
 
-        <form className="flex gap-2" onSubmit={handleCreate}>
-          <input
-            className="flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm outline-none focus:border-neutral-400"
-            maxLength={200}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="新专辑标题"
-            value={title}
-          />
-          <button
-            className="flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
-            disabled={createMutation.isPending}
-            type="submit"
+        <Form {...form}>
+          <form
+            className="flex gap-2"
+            onSubmit={form.handleSubmit((values) =>
+              createMutation.mutate(values),
+            )}
           >
-            <Plus size={15} />
-            创建
-          </button>
-        </form>
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        {createMutation.isError && (
-          <p className="text-sm text-red-400">{createMutation.error.message}</p>
-        )}
+            <FormField
+              control={form.control}
+              name="title"
+              render={({ field }) => (
+                <FormItem className="flex-1">
+                  <FormControl>
+                    <Input
+                      maxLength={200}
+                      placeholder="新专辑标题"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <Button disabled={createMutation.isPending} type="submit">
+              <Plus size={15} />
+              创建
+            </Button>
+          </form>
+        </Form>
 
         {albumsQuery.isPending && <p className="text-neutral-400">加载中…</p>}
         {albumsQuery.data?.length === 0 && (
@@ -85,15 +104,13 @@ export function AlbumsPage() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <span className="font-medium">{album.title}</span>
-                  <span
-                    className={
-                      album.visibility === "PUBLIC"
-                        ? "rounded-full bg-green-900/60 px-2 py-0.5 text-xs text-green-300"
-                        : "rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400"
+                  <Badge
+                    variant={
+                      album.visibility === "PUBLIC" ? "success" : "default"
                     }
                   >
                     {album.visibility === "PUBLIC" ? "公开" : "仅链接"}
-                  </span>
+                  </Badge>
                 </div>
                 <p className="mt-2 text-sm text-neutral-500">
                   {album.photoCount} 张照片 · {album.publicId}

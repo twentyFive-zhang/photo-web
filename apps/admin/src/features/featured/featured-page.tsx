@@ -1,11 +1,28 @@
 import type { FeaturedItem } from "@photo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import {
+  createColumnHelper,
+  tableFeatures,
+  useTable,
+} from "@tanstack/react-table";
 import { ChevronDown, ChevronUp, Star, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { apiFetch, mediaUrl } from "../../lib/api";
-import { AdminShell } from "../../lib/shell";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { apiFetch, mediaUrl } from "@/lib/api";
+import { AdminShell } from "@/lib/shell";
+
+const features = tableFeatures({});
+const helper = createColumnHelper<typeof features, FeaturedItem>();
 
 export function FeaturedPage() {
   return (
@@ -56,7 +73,7 @@ function FeaturedList() {
     onError: fail,
   });
 
-  const items = featuredQuery.data ?? [];
+  const items = featuredQuery.data ?? EMPTY_FEATURED;
 
   function move(index: number, delta: -1 | 1) {
     const target = index + delta;
@@ -65,6 +82,82 @@ function FeaturedList() {
     [next[index], next[target]] = [next[target], next[index]];
     reorderMutation.mutate(next.map((item) => item.photoId));
   }
+
+  const columns = helper.columns([
+    helper.display({
+      id: "index",
+      header: "#",
+      cell: ({ row }) => (
+        <span className="text-neutral-500">{row.index + 1}</span>
+      ),
+    }),
+    helper.display({
+      id: "thumb",
+      header: "预览",
+      cell: ({ row }) =>
+        row.original.thumbKey ? (
+          // biome-ignore lint/performance/noImgElement: 缩略图走本地 /media，不走 next/image 优化
+          <img
+            alt={row.original.photo.title ?? "精选照片"}
+            className="h-16 w-16 rounded-lg object-cover"
+            src={mediaUrl(row.original.thumbKey)}
+          />
+        ) : (
+          <div className="h-16 w-16 rounded-lg bg-neutral-900" />
+        ),
+    }),
+    helper.accessor((row) => row.photo.title ?? row.photo.publicId, {
+      id: "title",
+      header: "标题",
+      cell: (info) => (
+        <span className="text-neutral-200">{info.getValue()}</span>
+      ),
+    }),
+    helper.display({
+      id: "actions",
+      header: () => <span className="sr-only">操作</span>,
+      cell: ({ row }) => (
+        <div className="flex justify-end gap-2">
+          <Button
+            aria-label="上移"
+            disabled={row.index === 0}
+            onClick={() => move(row.index, -1)}
+            size="icon-sm"
+            type="button"
+            variant="outline"
+          >
+            <ChevronUp size={12} />
+          </Button>
+          <Button
+            aria-label="下移"
+            disabled={row.index === items.length - 1}
+            onClick={() => move(row.index, 1)}
+            size="icon-sm"
+            type="button"
+            variant="outline"
+          >
+            <ChevronDown size={12} />
+          </Button>
+          <Button
+            aria-label="移出精选"
+            disabled={removeMutation.isPending}
+            onClick={() => removeMutation.mutate(row.original.photoId)}
+            size="icon-sm"
+            type="button"
+            variant="destructive"
+          >
+            <Trash2 size={12} />
+          </Button>
+        </div>
+      ),
+    }),
+  ]);
+
+  const table = useTable({
+    features,
+    columns,
+    data: items,
+  });
 
   return (
     <main className="mx-auto min-h-screen max-w-4xl space-y-6 p-4 sm:p-8">
@@ -86,64 +179,43 @@ function FeaturedList() {
         </p>
       )}
 
-      <ul className="space-y-2">
-        {items.map((item, index) => (
-          <li
-            className="flex items-center gap-4 rounded-xl border border-neutral-800 p-3"
-            key={item.photoId}
-          >
-            <span className="w-6 text-center text-sm text-neutral-500">
-              {index + 1}
-            </span>
-            {item.thumbKey ? (
-              // biome-ignore lint/performance/noImgElement: 缩略图走本地 /media，不走 next/image 优化
-              <img
-                alt={item.photo.title ?? "精选照片"}
-                className="h-16 w-16 rounded-lg object-cover"
-                src={mediaUrl(item.thumbKey)}
-              />
-            ) : (
-              <div className="h-16 w-16 rounded-lg bg-neutral-900" />
-            )}
-            <div className="flex-1">
-              <p className="text-sm text-neutral-200">
-                {item.photo.title ?? item.photo.publicId}
-              </p>
-            </div>
-            <button
-              aria-label="上移"
-              className="rounded border border-neutral-700 p-1.5 hover:border-neutral-400 disabled:opacity-40"
-              disabled={index === 0}
-              onClick={() => move(index, -1)}
-              type="button"
-            >
-              <ChevronUp size={12} />
-            </button>
-            <button
-              aria-label="下移"
-              className="rounded border border-neutral-700 p-1.5 hover:border-neutral-400 disabled:opacity-40"
-              disabled={index === items.length - 1}
-              onClick={() => move(index, 1)}
-              type="button"
-            >
-              <ChevronDown size={12} />
-            </button>
-            <button
-              aria-label="移出精选"
-              className="rounded border border-red-900 p-1.5 text-red-300 hover:border-red-500"
-              disabled={removeMutation.isPending}
-              onClick={() => removeMutation.mutate(item.photoId)}
-              type="button"
-            >
-              <Trash2 size={12} />
-            </button>
-          </li>
-        ))}
-      </ul>
+      {items.length > 0 && (
+        <div className="rounded-xl border border-neutral-800">
+          <Table>
+            <TableHeader>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => (
+                    <TableHead key={header.id}>
+                      {header.isPlaceholder ? null : (
+                        <table.FlexRender header={header} />
+                      )}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              ))}
+            </TableHeader>
+            <TableBody>
+              {table.getRowModel().rows.map((row) => (
+                <TableRow key={row.id}>
+                  {row.getAllCells().map((cell) => (
+                    <TableCell key={cell.id}>
+                      <table.FlexRender cell={cell} />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
 
-      <Link className="text-sm text-neutral-500 hover:text-white" to="/albums">
-        ← 回专辑
-      </Link>
+      <Button asChild variant="ghost">
+        <Link to="/albums">← 回专辑</Link>
+      </Button>
     </main>
   );
 }
+
+/** 稳定空数组，避免 `?? []` 每渲染新建引用打乱 row model。 */
+const EMPTY_FEATURED: FeaturedItem[] = [];

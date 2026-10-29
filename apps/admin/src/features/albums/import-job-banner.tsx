@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, CloudUpload, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { apiFetch } from "../../lib/api";
+import { Button } from "@/components/ui/button";
+import { apiFetch } from "@/lib/api";
 
 const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
 
@@ -91,23 +92,25 @@ export function ImportJobBanner({ albumId }: { albumId: string }) {
         </div>
         {failedItems.length > 0 && (
           <div className="flex items-center gap-2">
-            <button
-              className="flex items-center gap-1 text-sm text-red-300 hover:text-red-200"
+            <Button
+              className="text-red-300 hover:text-red-200"
               onClick={() => setExpanded((current) => !current)}
               type="button"
+              variant="ghost"
             >
               {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               失败 {failedItems.length} 项
-            </button>
-            <button
-              className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-400 disabled:opacity-40"
+            </Button>
+            <Button
               disabled={retryMutation.isPending || isActive}
               onClick={() => retryMutation.mutate(job.id)}
+              size="sm"
               type="button"
+              variant="outline"
             >
               <RotateCcw size={12} />
               重试失败项
-            </button>
+            </Button>
           </div>
         )}
       </div>
