@@ -80,7 +80,8 @@ export interface BaiduPrecreateResponse {
 }
 
 export interface BaiduUploadHostResponse {
-  errno: number;
+  /** 此接口（d.pcs.baidu.com）返回 error_code 而非 errno。 */
+  error_code?: number;
   host?: string;
 }
 
@@ -91,6 +92,18 @@ export interface BaiduCreateResponse {
 
 /** filemanager 的操作类型。 */
 export type BaiduFilemanagerOpera = "delete" | "move" | "rename";
+
+/** filemanager 单个文件条目（delete 时只用 path，整体转成路径字符串数组）。 */
+export interface BaiduFilemanagerEntry {
+  path: string;
+  newname?: string;
+  dest?: string;
+}
+
+interface BaiduFilemanagerResponse {
+  errno: number;
+  info?: { errno: number; path?: string }[];
+}
 
 const PAN_BASE = "https://pan.baidu.com";
 const PCS_BASE = "https://d.pcs.baidu.com";
@@ -250,29 +263,55 @@ export class BaiduApiService {
 
   /**
    * 上传前置：取分片上传主机（约 60s 时效，每次上传前现取）。
+   * 必须带 access_token/path/uploadid/upload_version=2.0（官方文档要求）。
    */
-  async locateupload(): Promise<string> {
+  async locateupload(
+    accessToken: string,
+    path: string,
+    uploadid: string,
+  ): Promise<string> {
     const params = new URLSearchParams({
       method: "locateupload",
       appid: String(PCS_APPID),
+      access_token: accessToken,
+      path,
+      uploadid,
+      upload_version: "2.0",
     });
     const response = await fetch(
       `${PCS_BASE}/rest/2.0/pcs/file?${params.toString()}`,
     );
     const data = (await response.json()) as BaiduUploadHostResponse;
-    if (data.errno !== 0 || !data.host) {
+    if ((data.error_code ?? 0) !== 0 || !data.host) {
       throw new BaiduApiError(
-        `获取上传主机失败 (errno ${data.errno})`,
-        data.errno,
+        `获取上传主机失败 (error_code ${data.error_code})`,
+        data.error_code ?? -1,
       );
     }
     return data.host;
   }
 
   /**
+   * xpan/file 的 POST 请求统一形态（实测验证）：
+   * query 只放 method + access_token，其余参数放 form body
+   * （application/x-www-form-urlencoded，URLSearchParams 自动设置）；
+   * 全放 query 会报 errno 2。
+   */
+  private async postForm(
+    query: URLSearchParams,
+    body: URLSearchParams,
+    context: string,
+  ): Promise<Response> {
+    return fetch(`${PAN_BASE}/rest/2.0/xpan/file?${query.toString()}`, {
+      method: "POST",
+      body,
+    });
+  }
+
+  /**
    * 上传第一阶段：precreate 校验分片，返回 uploadid。
    * contentMd5/sliceMd5 用于秒传探测（无文档承诺，失败也只是多传一遍）。
-   * rtype=3：同名同路径时覆盖。
+   * rtype=3：同名同路径时覆盖；autoinit=1 必带（缺了 errno 0 但不返回 uploadid）。
    */
   async precreate(
     accessToken: string,
@@ -284,21 +323,21 @@ export class BaiduApiService {
       sliceMd5: string;
     },
   ): Promise<BaiduPrecreateResponse> {
-    const params = new URLSearchParams({
+    const query = new URLSearchParams({
       method: "precreate",
       access_token: accessToken,
+    });
+    const body = new URLSearchParams({
       path: input.path,
       size: String(input.size),
       isdir: "0",
+      autoinit: "1",
       block_list: JSON.stringify(input.blockList),
       "content-md5": input.contentMd5,
       "slice-md5": input.sliceMd5,
       rtype: "3",
     });
-    const response = await fetch(
-      `${PAN_BASE}/rest/2.0/xpan/file?${params.toString()}`,
-      { method: "POST" },
-    );
+    const response = await this.postForm(query, body, "上传预创建");
     const data = (await response.json()) as BaiduPrecreateResponse;
     assertOk(data.errno, "上传预创建");
     return data;
@@ -333,8 +372,12 @@ export class BaiduApiService {
       `https://${input.host}/rest/2.0/pcs/superfile2?${params.toString()}`,
       { method: "POST", body: form },
     );
-    const data = (await response.json()) as { errno: number };
-    assertOk(data.errno, "上传分片");
+    // pcs 域名成功响应无 errno（只有 md5）；失败用 error_code（pcs）或 errno（xpan）
+    const data = (await response.json()) as {
+      errno?: number;
+      error_code?: number;
+    };
+    assertOk(data.error_code ?? data.errno ?? 0, "上传分片");
   }
 
   /** 上传第三阶段：create 提交合并，返回 fs_id。 */
@@ -347,9 +390,11 @@ export class BaiduApiService {
       blockList: string[];
     },
   ): Promise<number> {
-    const params = new URLSearchParams({
+    const query = new URLSearchParams({
       method: "create",
       access_token: accessToken,
+    });
+    const body = new URLSearchParams({
       path: input.path,
       size: String(input.size),
       isdir: "0",
@@ -357,10 +402,7 @@ export class BaiduApiService {
       uploadid: input.uploadid,
       rtype: "3",
     });
-    const response = await fetch(
-      `${PAN_BASE}/rest/2.0/xpan/file?${params.toString()}`,
-      { method: "POST" },
-    );
+    const response = await this.postForm(query, body, "提交上传");
     const data = (await response.json()) as BaiduCreateResponse;
     assertOk(data.errno, "提交上传");
     if (!data.fs_id) {
@@ -370,36 +412,49 @@ export class BaiduApiService {
   }
 
   /**
-   * 文件管理（move/rename/delete）。filelist 为 JSON 数组，条目形如
-   * {"path": "..."}（move 另有顶层 dest；rename 条目带 newname）。
-   * errno 111 在此接口表示"有异步任务执行中"，可稍后重试——故在
-   * assertOk 之前拦截，避免被当成 token 失效触发无谓刷新。
+   * 文件管理（move/rename/delete），POST form body（实测验证）：
+   * query 放 method+access_token+opera，body 放 async+filelist（须整体
+   * URL 编码，原样发 JSON 报 errno 2）。filelist 结构随 opera 变化：
+   * delete 是纯路径字符串数组；move/rename 是对象数组，move 的 dest
+   * 放在每个条目内（不是顶层参数）。rename 用 async=1 同步拿逐文件
+   * 结果（目录不存在时 info[].errno=-9）；delete/move 用 async=2 异步
+   * （errno 0 + taskid 即受理）。
+   * errno 111 表示"有异步任务执行中"，可稍后重试——在 assertOk 之前
+   * 拦截，避免被当成 token 失效触发无谓刷新。
    */
   async filemanager(
     accessToken: string,
     opera: BaiduFilemanagerOpera,
-    filelist: Record<string, string>[],
-    dest?: string,
+    entries: BaiduFilemanagerEntry[],
   ): Promise<void> {
-    const params = new URLSearchParams({
+    const query = new URLSearchParams({
       method: "filemanager",
       access_token: accessToken,
       opera,
-      async: "1",
-      filelist: JSON.stringify(filelist),
-      ...(dest ? { dest } : {}),
     });
-    const response = await fetch(
-      `${PAN_BASE}/rest/2.0/xpan/file?${params.toString()}`,
-    );
-    const data = (await response.json()) as { errno: number };
+    const filelist =
+      opera === "delete"
+        ? JSON.stringify(entries.map((entry) => entry.path))
+        : JSON.stringify(entries);
+    const body = new URLSearchParams({
+      async: opera === "rename" ? "1" : "2",
+      filelist,
+    });
+    const response = await this.postForm(query, body, "网盘文件管理");
+    const data = (await response.json()) as BaiduFilemanagerResponse;
     if (data.errno === 111) {
       throw new BaiduApiError("网盘异步任务执行中，稍后重试", 111);
     }
-    if (data.errno === 12) {
-      throw new BaiduRateLimitError(data.errno);
+    if (data.errno === 0) {
+      return;
     }
-    assertOk(data.errno, "网盘文件管理");
+    // rename 同步模式下单文件错误在 info[] 里（如 -9 文件不存在），
+    // 透传给调用方（重命名传播把 -9 视为"目录从未推送过"跳过）
+    const failed = data.info?.find((entry) => entry.errno !== 0);
+    throw new BaiduApiError(
+      `网盘文件管理失败 (errno ${failed?.errno ?? data.errno})`,
+      failed?.errno ?? data.errno,
+    );
   }
 
   private async tokenRequest(

@@ -315,7 +315,7 @@ export class NetdiskSyncService implements OnModuleInit {
         contentMd5,
         sliceMd5,
       });
-      const host = await this.baiduApi.locateupload();
+      const host = await this.baiduApi.locateupload(token, path, pre.uploadid);
       for (let seq = 0; seq < blockList.length; seq++) {
         await this.baiduApi.superfile2(token, {
           host,

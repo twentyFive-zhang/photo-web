@@ -43,7 +43,6 @@ export class NetdiskProcessor extends WorkerHost {
     private readonly baiduApi: BaiduApiService,
     // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
     private readonly credentials: BaiduCredentialService,
-    // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
     private readonly sync: NetdiskSyncService,
     @InjectQueue("import") private readonly importQueue: Queue,
   ) {
@@ -290,12 +289,9 @@ export class NetdiskProcessor extends WorkerHost {
     const destDir = `${appDir}/${sanitizeNetdiskName(data.destAlbumTitle)}`;
     const filename = photo.netdiskPath.split("/").pop() ?? "";
     await this.credentials.withAccessToken((token) =>
-      this.baiduApi.filemanager(
-        token,
-        "move",
-        [{ path: photo.netdiskPath ?? "" }],
-        destDir,
-      ),
+      this.baiduApi.filemanager(token, "move", [
+        { path: photo.netdiskPath ?? "", dest: destDir, newname: filename },
+      ]),
     );
     await this.prisma.photo.update({
       where: { id: data.photoId },
