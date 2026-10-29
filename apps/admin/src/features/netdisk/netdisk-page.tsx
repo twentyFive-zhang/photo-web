@@ -19,6 +19,7 @@ import {
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -97,6 +98,11 @@ function NetdiskBrowser() {
     () => new Set(fsidsQuery.data?.fsids ?? []),
     [fsidsQuery.data],
   );
+
+  // 挂载且已连接后拉取根目录（根没有可点的行，必须主动加载）
+  useEffect(() => {
+    if (statusQuery.data?.connected) void fetchIntoTree("", 1, false);
+  }, [statusQuery.data?.connected]);
 
   const createImport = useMutation({
     mutationFn: async (vars: {
