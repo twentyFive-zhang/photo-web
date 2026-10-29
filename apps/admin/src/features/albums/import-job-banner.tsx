@@ -40,6 +40,16 @@ export function ImportJobBanner({ albumId }: { albumId: string }) {
   const job = jobsQuery.data?.[0];
   const isActive = job !== undefined && ACTIVE_STATUSES.has(job.status);
 
+  // 全部成功后短暂展示「导入完成」再自动收起；失败态保留（重试/详情要看）
+  const [dismissed, setDismissed] = useState(false);
+  const jobId = job?.id;
+  useEffect(() => setDismissed(false), [jobId]);
+  useEffect(() => {
+    if (job?.status !== "SUCCEEDED") return;
+    const timer = setTimeout(() => setDismissed(true), 3000);
+    return () => clearTimeout(timer);
+  }, [job?.status]);
+
   // 任务到达终态时刷新专辑照片（新导入的照片出现在列表里）
   const status = job?.status;
   useEffect(() => {
@@ -48,7 +58,7 @@ export function ImportJobBanner({ albumId }: { albumId: string }) {
     }
   }, [albumId, queryClient, status]);
 
-  if (jobsQuery.isPending || !job) {
+  if (jobsQuery.isPending || !job || dismissed) {
     return null;
   }
 
