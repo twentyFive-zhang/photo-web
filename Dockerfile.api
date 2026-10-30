@@ -1,0 +1,46 @@
+# Railway API 部署用（服务设置里把 Dockerfile Path 指到本文件）。
+# bun 负责安装与构建，运行时用 node：NestJS 依赖 node 生态（BullMQ/express-session）更稳。
+# ---- 构建阶段 ----
+FROM oven/bun:1.4.4 AS build
+WORKDIR /app
+
+# 先只拷贝各 workspace 的 package.json + lockfile + 根 tsconfig（shared 继承），利用 Docker 层缓存
+COPY package.json bun.lock tsconfig.base.json ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/admin/package.json apps/admin/package.json
+COPY packages/shared/package.json packages/shared/package.json
+RUN bun install --frozen-lockfile
+
+COPY packages/shared packages/shared
+COPY apps/api apps/api
+# prisma CLI 嵌套在 apps/api/node_modules（bun 不提升），oven/bun 镜像无 node，
+# 须用 bun 直接执行其入口脚本；generate 会下载查询引擎
+RUN bun run build:shared \
+  && bun apps/api/node_modules/prisma/build/index.js generate --schema apps/api/prisma/schema.prisma \
+  && bun run --cwd apps/api build
+
+# ---- 运行阶段 ----
+FROM node:24-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Prisma 查询引擎依赖 libssl；slim 镜像没有，缺了会启动即崩（实测踩过）
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
+
+# node_modules 分两处：根（shared 的依赖）+ apps/api（prisma/argon2/sharp 等运行时依赖，
+# bun 不提升；@prisma/client 的 generate 产物也在这里）
+COPY --from=build /app/node_modules node_modules
+COPY --from=build /app/apps/api/node_modules apps/api/node_modules
+COPY --from=build /app/package.json package.json
+COPY --from=build /app/packages/shared packages/shared
+COPY --from=build /app/apps/api/dist apps/api/dist
+COPY --from=build /app/apps/api/prisma apps/api/prisma
+COPY --from=build /app/apps/api/package.json apps/api/package.json
+
+WORKDIR /app/apps/api
+EXPOSE 3001
+# 启动前先跑迁移（幂等），再起 API；Railway 注入的 PORT 由应用读取
+CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy && exec node dist/main.js"]

@@ -35,7 +35,7 @@ async function bootstrap() {
     expressInstance.set("trust proxy", 1);
   }
 
-  // 管理员 session：Redis 存储，HttpOnly/Secure/SameSite=Lax
+  // 管理员 session：Redis 存储，HttpOnly/Secure；SameSite 由 SESSION_COOKIE_SAMESITE 配置
   // connect-redis v10 只支持 node-redis（ioredis 留给 M5 的 BullMQ）
   const redis = createClient({ url: config.getOrThrow<string>("REDIS_URL") });
   await redis.connect();
@@ -49,7 +49,9 @@ async function bootstrap() {
       cookie: {
         httpOnly: true,
         secure: nodeEnv === "production",
-        sameSite: "lax",
+        sameSite: config.getOrThrow<"lax" | "strict" | "none">(
+          "SESSION_COOKIE_SAMESITE",
+        ),
         maxAge: 7 * 24 * 60 * 60 * 1000,
       },
     }),

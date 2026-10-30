@@ -1,0 +1,17 @@
+# 控制构建上下文体积（Dockerfile.api 只需要 lockfile + apps/api + packages/shared；
+# web/admin 仅保留 package.json 供 workspace 安装解析）
+node_modules
+**/node_modules
+.git
+**/dist
+**/var
+**/.next
+**/.turbo
+**/coverage
+docs
+apps/web
+!apps/web/package.json
+apps/admin
+!apps/admin/package.json
+*.md
+.github

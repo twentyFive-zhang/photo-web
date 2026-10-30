@@ -16,6 +16,9 @@ const envSchema = z.object({
     .string()
     .min(32)
     .default("dev-only-session-secret-change-me-32"),
+  // 前台/后台与 API 跨站部署（如 Vercel + Railway）时需设为 "none"，
+  // 否则浏览器不会把会话 Cookie 发给跨站 API；同站部署（子域名）保持 "lax"
+  SESSION_COOKIE_SAMESITE: z.enum(["lax", "strict", "none"]).default("lax"),
   APP_ENCRYPTION_KEY: z.string().min(16).default("dev-only-encryption-key"),
   ADMIN_USERNAME: z.string().default("admin"),
   ADMIN_PASSWORD: z.string().optional(),
