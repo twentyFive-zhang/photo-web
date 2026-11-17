@@ -97,6 +97,7 @@ model Photo {
   tags         PhotoTag[]
   featured     FeaturedPhoto?
   importItems  ImportItem[]
+  pushFailure  NetdiskPushFailure?
 
   @@index([albumId, sortOrder])
 }
@@ -203,6 +204,24 @@ model NetdiskPendingDelete {
   createdAt   DateTime @default(now())
 
   @@unique([netdiskFsId])
+}
+
+/// 推送网盘重试耗尽后的持久化失败记录（重推成功或人工忽略后清除；
+/// 一张照片最多一条，重复失败覆盖更新，全量推送兜底不再让失败只留在 stdout）
+model NetdiskPushFailure {
+  id          String   @id @default(cuid())
+  photoId     String   @unique
+  publicId    String
+  filename    String
+  albumTitle  String
+  // 百度 errno；网络/存储等非百度错误为 null
+  errno       Int?
+  error       String
+  attemptedAt DateTime @default(now())
+
+  photo Photo @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@index([attemptedAt])
 }
 
 model SiteSetting {

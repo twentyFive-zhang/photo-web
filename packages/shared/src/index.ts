@@ -54,6 +54,9 @@ export {
 export type {
   NetdiskMissingPhoto,
   NetdiskPendingDelete,
+  NetdiskPushFailure,
+  NetdiskRepushInput,
+  NetdiskRepushResult,
   NetdiskScanReport,
   NetdiskScanTriggered,
   NetdiskStatus,
@@ -61,6 +64,9 @@ export type {
 export {
   netdiskMissingPhotoSchema,
   netdiskPendingDeleteSchema,
+  netdiskPushFailureSchema,
+  netdiskRepushInputSchema,
+  netdiskRepushResultSchema,
   netdiskScanReportSchema,
   netdiskScanTriggeredSchema,
   netdiskStatusSchema,

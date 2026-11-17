@@ -1,4 +1,9 @@
-import { InjectQueue, Processor, WorkerHost } from "@nestjs/bullmq";
+import {
+  InjectQueue,
+  OnWorkerEvent,
+  Processor,
+  WorkerHost,
+} from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
 import type { NetdiskMissingPhoto } from "@photo/shared";
 import type { Job, Queue } from "bullmq";
@@ -60,6 +65,30 @@ export class NetdiskProcessor extends WorkerHost {
       case "renameAlbum":
         return this.runRenameAlbum(job.data as RenamePayload);
     }
+  }
+
+  /**
+   * push 任务重试耗尽（Bull failed 事件、attempts 用尽）→ 失败落库，
+   * admin 可见；不再只留 stdout。failed 事件在 moveToFailed 之后触发，
+   * attemptsMade 已含本次失败，故 `attemptsMade >= attempts` 即最终失败。
+   */
+  @OnWorkerEvent("failed")
+  onPushFailedFinal(
+    job: Job<NetdiskJobPayload> | undefined,
+    error: Error,
+  ): void {
+    if (
+      job?.data.type !== "push" ||
+      job.attemptsMade < (job.opts.attempts ?? 1)
+    ) {
+      return;
+    }
+    const photoId = job.data.photoId;
+    this.sync.recordPushFailure(photoId, error).catch((recordError) => {
+      this.logger.error(
+        `推送失败记录落库失败 photoId=${photoId}: ${recordError instanceof Error ? recordError.message : recordError}`,
+      );
+    });
   }
 
   private async runPush(job: Job<PushPayload>): Promise<void> {
