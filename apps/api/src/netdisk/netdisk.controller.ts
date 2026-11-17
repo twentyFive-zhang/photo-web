@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   ConflictException,
   Controller,
   Get,
@@ -10,12 +11,18 @@ import {
   Post,
   UseGuards,
 } from "@nestjs/common";
-import type { NetdiskStatus } from "@photo/shared";
+import type {
+  NetdiskRepushInput,
+  NetdiskRepushResult,
+  NetdiskStatus,
+} from "@photo/shared";
+import { netdiskRepushInputSchema } from "@photo/shared";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { BaiduApiError, BaiduApiService } from "../baidu/baidu-api.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { BaiduCredentialService } from "../baidu/baidu-credential.service.js";
 import { AdminGuard } from "../common/admin.guard.js";
+import { ZodValidationPipe } from "../common/zod-validation.pipe.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PrismaService } from "../prisma/prisma.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
@@ -37,20 +44,29 @@ export class NetdiskController {
 
   @Get("status")
   async status(): Promise<NetdiskStatus> {
-    const [connection, setting, totalPhotos, syncedCount, pendingDeletes] =
-      await Promise.all([
-        this.credentials.getStatus(),
-        this.prisma.siteSetting.upsert({
-          where: { id: "singleton" },
-          update: {},
-          create: { id: "singleton" },
-        }),
-        this.prisma.photo.count(),
-        this.prisma.photo.count({ where: { netdiskFsId: { not: null } } }),
-        this.prisma.netdiskPendingDelete.findMany({
-          orderBy: { createdAt: "desc" },
-        }),
-      ]);
+    const [
+      connection,
+      setting,
+      totalPhotos,
+      syncedCount,
+      pendingDeletes,
+      pushFailures,
+    ] = await Promise.all([
+      this.credentials.getStatus(),
+      this.prisma.siteSetting.upsert({
+        where: { id: "singleton" },
+        update: {},
+        create: { id: "singleton" },
+      }),
+      this.prisma.photo.count(),
+      this.prisma.photo.count({ where: { netdiskFsId: { not: null } } }),
+      this.prisma.netdiskPendingDelete.findMany({
+        orderBy: { createdAt: "desc" },
+      }),
+      this.prisma.netdiskPushFailure.findMany({
+        orderBy: { attemptedAt: "desc" },
+      }),
+    ]);
 
     return {
       appConfigured: connection.appConfigured,
@@ -63,6 +79,16 @@ export class NetdiskController {
         filename: row.filename,
         albumTitle: row.albumTitle,
         createdAt: row.createdAt.toISOString(),
+      })),
+      pushFailures: pushFailures.map((row) => ({
+        id: row.id,
+        photoId: row.photoId,
+        publicId: row.publicId,
+        filename: row.filename,
+        albumTitle: row.albumTitle,
+        errno: row.errno,
+        error: row.error,
+        attemptedAt: row.attemptedAt.toISOString(),
       })),
       scanReport: await this.sync.readScanReport(),
     };
@@ -114,6 +140,36 @@ export class NetdiskController {
       throw new BadRequestException("尚未连接百度网盘");
     }
     return { queued: await this.sync.enqueuePushAlbum(albumId) };
+  }
+
+  /**
+   * 缺失/推送失败一键重推：清旧映射后复用既有 push 管线（幂等，jobId 去重）。
+   * body.photoIds 来自扫描报告 missing 列表或推送失败列表。
+   */
+  @Post("missing/repush")
+  @HttpCode(HttpStatus.OK)
+  async repushMissing(
+    @Body(new ZodValidationPipe(netdiskRepushInputSchema))
+    body: NetdiskRepushInput,
+  ): Promise<NetdiskRepushResult> {
+    if (!(await this.credentials.isConnected())) {
+      throw new BadRequestException("尚未连接百度网盘");
+    }
+    return { queued: await this.sync.enqueueRepush(body.photoIds) };
+  }
+
+  /** 忽略推送失败记录：网盘侧不处理，仅移除提示。 */
+  @Post("push-failures/:id/dismiss")
+  @HttpCode(HttpStatus.OK)
+  async dismissPushFailure(@Param("id") id: string): Promise<void> {
+    const row = await this.prisma.netdiskPushFailure.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!row) {
+      throw new NotFoundException("推送失败记录不存在");
+    }
+    await this.prisma.netdiskPushFailure.delete({ where: { id } });
   }
 
   /** 确认删除网盘镜像文件（站内已删，这里真正删网盘侧副本）。 */

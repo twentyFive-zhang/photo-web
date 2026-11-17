@@ -11,6 +11,7 @@ import {
   Plus,
   QrCode,
   RefreshCw,
+  RotateCcw,
   Settings as SettingsIcon,
   Trash2,
   UploadCloud,
@@ -182,6 +183,32 @@ function NetdiskSection({
     onError: (err) => toast.error(err.message),
   });
 
+  /** 缺失/推送失败重推（清旧映射后复用既有 push 管线）。 */
+  const repushMutation = useMutation({
+    mutationFn: (photoIds: string[]) =>
+      apiFetch<{ queued: number }>("/admin/netdisk/missing/repush", {
+        method: "POST",
+        body: JSON.stringify({ photoIds }),
+      }),
+    onSuccess: (data) => {
+      toast.success(`已入队 ${data.queued} 张照片重推`);
+      queryClient.invalidateQueries({ queryKey });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const dismissFailureMutation = useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<void>(`/admin/netdisk/push-failures/${id}/dismiss`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      toast.success("已忽略，网盘侧未处理");
+      queryClient.invalidateQueries({ queryKey });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   const disconnectMutation = useMutation({
     mutationFn: () =>
       apiFetch<void>("/admin/baidu/disconnect", { method: "POST" }),
@@ -319,15 +346,94 @@ function NetdiskSection({
                   </p>
                 )}
                 {report.missing.length > 0 && (
-                  <p className="mt-1 text-amber-400">
-                    网盘侧缺失（已被手动删除，站内照片未动）：
-                    {report.missing
-                      .slice(0, 10)
-                      .map((photo) => photo.filename)
-                      .join("、")}
-                    {report.missing.length > 10 && "…"}
-                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    <p className="text-amber-400">
+                      网盘侧缺失（已被手动删除，站内照片未动），可重推恢复镜像：
+                    </p>
+                    {report.missing.map((photo) => (
+                      <div
+                        className="flex flex-wrap items-center gap-2 text-sm text-neutral-400"
+                        key={photo.photoId}
+                      >
+                        <span className="flex-1 truncate">
+                          {photo.filename}（{photo.albumTitle}）
+                        </span>
+                        <Button
+                          disabled={repushMutation.isPending}
+                          onClick={() => repushMutation.mutate([photo.photoId])}
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          <RotateCcw size={13} />
+                          重推
+                        </Button>
+                      </div>
+                    ))}
+                    <Button
+                      disabled={repushMutation.isPending}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `把缺失的 ${report.missing.length} 张照片重新推送到网盘？`,
+                          )
+                        ) {
+                          repushMutation.mutate(
+                            report.missing.map((photo) => photo.photoId),
+                          );
+                        }
+                      }}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <RotateCcw size={13} />
+                      全部重推（{report.missing.length}）
+                    </Button>
+                  </div>
                 )}
+              </div>
+            )}
+
+            {status.pushFailures.length > 0 && (
+              <div className="space-y-2 rounded-lg border border-red-900/60 p-3">
+                <p className="text-sm text-red-400">
+                  推送失败（重试 3 次耗尽，网盘上没有这些文件）：
+                </p>
+                {status.pushFailures.map((item) => (
+                  <div
+                    className="flex flex-wrap items-center gap-2 text-sm text-neutral-400"
+                    key={item.id}
+                  >
+                    <span className="flex-1 truncate">
+                      {item.filename}（{item.albumTitle}）
+                      <span className="ml-1 text-neutral-500">
+                        {new Date(item.attemptedAt).toLocaleString()}{" "}
+                        {item.errno !== null ? `errno ${item.errno} · ` : ""}
+                        {item.error}
+                      </span>
+                    </span>
+                    <Button
+                      disabled={repushMutation.isPending}
+                      onClick={() => repushMutation.mutate([item.photoId])}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <RotateCcw size={13} />
+                      重推
+                    </Button>
+                    <Button
+                      disabled={dismissFailureMutation.isPending}
+                      onClick={() => dismissFailureMutation.mutate(item.id)}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      忽略
+                    </Button>
+                  </div>
+                ))}
               </div>
             )}
 

@@ -143,6 +143,95 @@ export class NetdiskSyncService implements OnModuleInit {
     }
   }
 
+  /**
+   * 缺失/推送失败重推：清掉旧映射与失败记录后复用既有 push 管线
+   * （jobId 与单张推送相同，天然去重；推送成功后 netdiskFsId 重新回写）。
+   * 只删除停在 failed 集合的旧 push 任务——同 jobId 已存在时 addBulk 会被
+   * 静默去重，failed 任务不删则永远推不动；等待/延迟中的任务保留（去重即可，
+   * 它执行时会读到已清空的映射，照样推）。返回实际入队数量。
+   */
+  async enqueueRepush(photoIds: string[]): Promise<number> {
+    if (!(await this.credentials.isConnected())) {
+      return 0;
+    }
+    const photos = await this.prisma.photo.findMany({
+      where: { id: { in: photoIds } },
+      select: { id: true },
+    });
+    if (photos.length === 0) {
+      return 0;
+    }
+    const ids = photos.map((photo) => photo.id);
+    for (const photo of photos) {
+      const existing = await this.queue.getJob(`push-${photo.id}`);
+      if (existing && (await existing.isFailed())) {
+        await existing.remove().catch(() => undefined);
+      }
+    }
+    await this.prisma.photo.updateMany({
+      where: { id: { in: ids } },
+      data: { netdiskFsId: null, netdiskPath: null },
+    });
+    await this.prisma.netdiskPushFailure.deleteMany({
+      where: { photoId: { in: ids } },
+    });
+    await this.queue.addBulk(
+      photos.map((photo) => ({
+        name: "netdisk-sync",
+        data: { type: "push" as const, photoId: photo.id },
+        opts: { ...BULL_JOB_OPTIONS, jobId: `push-${photo.id}` },
+      })),
+    );
+    return photos.length;
+  }
+
+  /**
+   * 推送重试耗尽后的持久化失败记录（worker 在 final failure 时调用）。
+   * 幂等：同照片重复失败覆盖更新（error/errno/attemptedAt 取最近一次）。
+   */
+  async recordPushFailure(photoId: string, error: unknown): Promise<void> {
+    const photo = await this.prisma.photo.findUnique({
+      where: { id: photoId },
+      select: {
+        publicId: true,
+        netdiskPath: true,
+        album: { select: { title: true } },
+      },
+    });
+    if (!photo) {
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    const errno = error instanceof BaiduApiError ? error.errno : null;
+    const filename = photo.netdiskPath?.split("/").pop() ?? photo.publicId;
+    const data = {
+      publicId: photo.publicId,
+      filename,
+      albumTitle: photo.album.title,
+      errno,
+      error: message,
+      attemptedAt: new Date(),
+    };
+    await this.prisma.netdiskPushFailure.upsert({
+      where: { photoId },
+      update: data,
+      create: { photoId, ...data },
+    });
+    this.logger.warn(
+      `推送网盘失败（重试耗尽）：${filename}（${photo.album.title}）errno=${errno ?? "-"} ${message}`,
+    );
+  }
+
+  /** 清除推送失败记录：推送成功（或照片实际已同步）后调用。 */
+  async clearPushFailures(photoIds: string[]): Promise<void> {
+    if (photoIds.length === 0) {
+      return;
+    }
+    await this.prisma.netdiskPushFailure.deleteMany({
+      where: { photoId: { in: photoIds } },
+    });
+  }
+
   /** 按专辑补推：该专辑所有未同步照片入队（jobId 与单张推送相同，天然去重），返回入队数量。 */
   async enqueuePushAlbum(albumId: string): Promise<number> {
     if (!(await this.credentials.isConnected())) {
@@ -293,7 +382,8 @@ export class NetdiskSyncService implements OnModuleInit {
   /**
    * 上行推送单张照片（push 任务的执行体）：
    * 读原件 → 整体/首片/分片 MD5 → precreate → 4MB 分片 superfile2 → create → 回写映射。
-   * 已同步（netdiskFsId 已设）直接跳过——网盘导入回写与推送入队有竞态，这里兜底。
+   * 已同步（netdiskFsId 已设）直接跳过——网盘导入回写与推送入队有竞态，这里兜底
+   * （文件确实在网盘上，残留的失败记录一并清除）。
    */
   async pushPhoto(photoId: string): Promise<void> {
     const photo = await this.prisma.photo.findUnique({
@@ -308,6 +398,9 @@ export class NetdiskSyncService implements OnModuleInit {
       },
     });
     if (!photo || photo.netdiskFsId) {
+      if (photo) {
+        await this.clearPushFailures([photoId]);
+      }
       return;
     }
 
@@ -363,6 +456,7 @@ export class NetdiskSyncService implements OnModuleInit {
       where: { id: photoId },
       data: { netdiskFsId: String(fsId), netdiskPath: path },
     });
+    await this.clearPushFailures([photoId]);
     if (this.pushAllState) {
       this.pushAllState.done += 1;
     }

@@ -18,6 +18,20 @@ export const netdiskPendingDeleteSchema = z.object({
 });
 export type NetdiskPendingDelete = z.infer<typeof netdiskPendingDeleteSchema>;
 
+/** 推送网盘重试耗尽后的持久化失败记录（重推成功或忽略后清除）。 */
+export const netdiskPushFailureSchema = z.object({
+  id: z.string(),
+  photoId: z.string(),
+  publicId: z.string(),
+  filename: z.string(),
+  albumTitle: z.string(),
+  /** 百度 errno；非百度错误（网络/存储）为 null。 */
+  errno: z.number().nullable(),
+  error: z.string(),
+  attemptedAt: z.string(),
+});
+export type NetdiskPushFailure = z.infer<typeof netdiskPushFailureSchema>;
+
 /** 网盘侧缺失（被手动删除）的站内照片。 */
 export const netdiskMissingPhotoSchema = z.object({
   photoId: z.string(),
@@ -50,6 +64,8 @@ export const netdiskStatusSchema = z.object({
   syncedCount: z.number(),
   totalPhotos: z.number(),
   pendingDeletes: z.array(netdiskPendingDeleteSchema),
+  /** 推送失败（重试耗尽）的照片列表。 */
+  pushFailures: z.array(netdiskPushFailureSchema),
   scanReport: netdiskScanReportSchema.nullable(),
 });
 export type NetdiskStatus = z.infer<typeof netdiskStatusSchema>;
@@ -59,3 +75,14 @@ export const netdiskScanTriggeredSchema = z.object({
   queued: z.boolean(),
 });
 export type NetdiskScanTriggered = z.infer<typeof netdiskScanTriggeredSchema>;
+
+/** 缺失/推送失败照片一键重推（清旧映射后复用既有 push 管线）。 */
+export const netdiskRepushInputSchema = z.object({
+  photoIds: z.array(z.string().min(1)).min(1).max(2000),
+});
+export type NetdiskRepushInput = z.infer<typeof netdiskRepushInputSchema>;
+
+export const netdiskRepushResultSchema = z.object({
+  queued: z.number(),
+});
+export type NetdiskRepushResult = z.infer<typeof netdiskRepushResultSchema>;
