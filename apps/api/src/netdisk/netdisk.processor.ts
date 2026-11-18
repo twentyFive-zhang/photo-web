@@ -95,7 +95,12 @@ export class NetdiskProcessor extends WorkerHost {
     try {
       await this.sync.pushPhoto(job.data.photoId);
     } catch (error) {
-      this.sync.onPushFailed();
+      // process 抛错时 moveToFailed 尚未执行，attemptsMade 不含本次失败：
+      // +1 后等于 attempts 即重试耗尽的最终失败。每次尝试都计数会让 pushAll
+      // 的 failed 虚高数倍、提前触发收尾。
+      if (job.attemptsMade + 1 >= (job.opts.attempts ?? 1)) {
+        this.sync.onPushFailed();
+      }
       throw error;
     } finally {
       const state = this.sync.getPushAllState();

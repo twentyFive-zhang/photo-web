@@ -39,6 +39,16 @@ const BULL_JOB_OPTIONS = {
   removeOnComplete: true,
 };
 
+/**
+ * push 任务专用选项：最终失败的任务从 failed 集合移除（removeOnFail）。
+ * 失败可见性由 worker 事件落库（NetdiskPushFailure），不依赖 failed 里的任务体；
+ * 而 failed 残留任务会以同 jobId 静默吞掉后续补推（JIANGLIUER-24）。
+ */
+const PUSH_JOB_OPTIONS = {
+  ...BULL_JOB_OPTIONS,
+  removeOnFail: true,
+};
+
 /** 全量推送单次上限（个人站规模远达不到，防误触失控）。 */
 const MAX_PUSH_ALL = 2000;
 
@@ -77,7 +87,10 @@ export class NetdiskSyncService implements OnModuleInit {
     await this.enqueueDailyScanRepeatable();
   }
 
-  /** 新照片入队上行推送；未连接网盘时静默跳过（netdiskFsId 留空，全量推送兜底）。 */
+  /**
+   * 新照片入队上行推送；未连接网盘时静默跳过（netdiskFsId 留空，全量推送兜底）。
+   * 只在上传创建后调用（photoId 全新），不存在历史同 jobId 任务，无需清理 failed。
+   */
   async enqueuePush(photoId: string): Promise<void> {
     if (!(await this.credentials.isConnected())) {
       return;
@@ -85,7 +98,7 @@ export class NetdiskSyncService implements OnModuleInit {
     await this.queue.add(
       "netdisk-sync",
       { type: "push", photoId },
-      { ...BULL_JOB_OPTIONS, jobId: `push-${photoId}` },
+      { ...PUSH_JOB_OPTIONS, jobId: `push-${photoId}` },
     );
   }
 
@@ -144,11 +157,25 @@ export class NetdiskSyncService implements OnModuleInit {
   }
 
   /**
+   * 只删除停在 failed 集合的旧 push 任务：同 jobId 已存在时 addBulk 会被
+   * 静默去重，failed 任务不删则永远推不动；等待/延迟/活跃中的任务保留
+   * （去重即可，它会正常执行或重试）。历史版本未设 removeOnFail，failed
+   * 集合里可能残留旧任务，入队前仍需显式清理（JIANGLIUER-24）。
+   */
+  private async removeFailedPushJobs(photoIds: string[]): Promise<void> {
+    for (const photoId of photoIds) {
+      const existing = await this.queue.getJob(`push-${photoId}`);
+      if (existing && (await existing.isFailed())) {
+        await existing.remove().catch(() => undefined);
+      }
+    }
+  }
+
+  /**
    * 缺失/推送失败重推：清掉旧映射与失败记录后复用既有 push 管线
    * （jobId 与单张推送相同，天然去重；推送成功后 netdiskFsId 重新回写）。
-   * 只删除停在 failed 集合的旧 push 任务——同 jobId 已存在时 addBulk 会被
-   * 静默去重，failed 任务不删则永远推不动；等待/延迟中的任务保留（去重即可，
-   * 它执行时会读到已清空的映射，照样推）。返回实际入队数量。
+   * 入队前先清理停在 failed 集合的旧任务（见 removeFailedPushJobs）。
+   * 返回实际入队数量。
    */
   async enqueueRepush(photoIds: string[]): Promise<number> {
     if (!(await this.credentials.isConnected())) {
@@ -162,12 +189,7 @@ export class NetdiskSyncService implements OnModuleInit {
       return 0;
     }
     const ids = photos.map((photo) => photo.id);
-    for (const photo of photos) {
-      const existing = await this.queue.getJob(`push-${photo.id}`);
-      if (existing && (await existing.isFailed())) {
-        await existing.remove().catch(() => undefined);
-      }
-    }
+    await this.removeFailedPushJobs(ids);
     await this.prisma.photo.updateMany({
       where: { id: { in: ids } },
       data: { netdiskFsId: null, netdiskPath: null },
@@ -179,7 +201,7 @@ export class NetdiskSyncService implements OnModuleInit {
       photos.map((photo) => ({
         name: "netdisk-sync",
         data: { type: "push" as const, photoId: photo.id },
-        opts: { ...BULL_JOB_OPTIONS, jobId: `push-${photo.id}` },
+        opts: { ...PUSH_JOB_OPTIONS, jobId: `push-${photo.id}` },
       })),
     );
     return photos.length;
@@ -232,7 +254,11 @@ export class NetdiskSyncService implements OnModuleInit {
     });
   }
 
-  /** 按专辑补推：该专辑所有未同步照片入队（jobId 与单张推送相同，天然去重），返回入队数量。 */
+  /**
+   * 按专辑补推：该专辑所有未同步照片入队（jobId 与单张推送相同）。
+   * 入队前先清理停在 failed 集合的旧任务，否则同 jobId 的 addBulk 被
+   * 静默去重、补推被吞（JIANGLIUER-24）。返回入队数量。
+   */
   async enqueuePushAlbum(albumId: string): Promise<number> {
     if (!(await this.credentials.isConnected())) {
       return 0;
@@ -245,17 +271,22 @@ export class NetdiskSyncService implements OnModuleInit {
     if (photos.length === 0) {
       return 0;
     }
+    await this.removeFailedPushJobs(photos.map((photo) => photo.id));
     await this.queue.addBulk(
       photos.map((photo) => ({
         name: "netdisk-sync",
         data: { type: "push" as const, photoId: photo.id },
-        opts: { ...BULL_JOB_OPTIONS, jobId: `push-${photo.id}` },
+        opts: { ...PUSH_JOB_OPTIONS, jobId: `push-${photo.id}` },
       })),
     );
     return photos.length;
   }
 
-  /** 存量回填：所有未同步照片入队。进行中返回 null。 */
+  /**
+   * 存量回填：所有未同步照片入队。进行中返回 null。
+   * 不设自定义 jobId（BullMQ 走自增 id），不存在同 jobId 去重吞任务的问题；
+   * removeOnFail 让失败任务不留残留（失败可见性走 DB 失败记录）。
+   */
   async enqueuePushAll(): Promise<PushAllState | null> {
     if (this.pushAllState) {
       return null;
@@ -271,7 +302,7 @@ export class NetdiskSyncService implements OnModuleInit {
       photos.map((photo) => ({
         name: "netdisk-sync",
         data: { type: "push" as const, photoId: photo.id },
-        opts: BULL_JOB_OPTIONS,
+        opts: PUSH_JOB_OPTIONS,
       })),
     );
     return this.pushAllState;
@@ -400,6 +431,11 @@ export class NetdiskSyncService implements OnModuleInit {
     if (!photo || photo.netdiskFsId) {
       if (photo) {
         await this.clearPushFailures([photoId]);
+      }
+      // 无需再推也计入全量推送进度，否则 done+failed 追不上 queued、收尾不触发
+      // （照片入队后被网盘导入或单张推送抢先同步时走这里）。
+      if (this.pushAllState) {
+        this.pushAllState.done += 1;
       }
       return;
     }
