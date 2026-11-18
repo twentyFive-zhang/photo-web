@@ -44,9 +44,7 @@ export class NetdiskProcessor extends WorkerHost {
 
   constructor(
     private readonly prisma: PrismaService,
-    // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
     private readonly baiduApi: BaiduApiService,
-    // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
     private readonly credentials: BaiduCredentialService,
     private readonly sync: NetdiskSyncService,
     @InjectQueue("import") private readonly importQueue: Queue,

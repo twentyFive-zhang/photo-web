@@ -24,7 +24,6 @@ export class BaiduCredentialService {
 
   constructor(
     private readonly prisma: PrismaService,
-    // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
     private readonly baiduApi: BaiduApiService,
     private readonly config: ConfigService<Env, true>,
   ) {}

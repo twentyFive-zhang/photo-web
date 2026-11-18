@@ -81,9 +81,7 @@ export function toImportJob(
 export class ImportService {
   constructor(
     private readonly prisma: PrismaService,
-    // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
     private readonly baiduApi: BaiduApiService,
-    // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
     private readonly credentials: BaiduCredentialService,
     @InjectQueue("import") private readonly queue: Queue,
   ) {}

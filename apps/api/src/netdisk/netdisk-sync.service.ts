@@ -60,13 +60,9 @@ export class NetdiskSyncService implements OnModuleInit {
 
   constructor(
     private readonly prisma: PrismaService,
-    // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
     private readonly baiduApi: BaiduApiService,
-    // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
     private readonly credentials: BaiduCredentialService,
-    // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
     private readonly storage: StorageService,
-    // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
     private readonly config: ConfigService<Env, true>,
     @InjectQueue("netdisk-sync")
     private readonly queue: Queue<NetdiskJobPayload>,
