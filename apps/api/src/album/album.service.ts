@@ -406,7 +406,7 @@ export class AlbumService {
       exif: unknown;
       sortOrder: number;
       renditions: {
-        variant: "THUMB" | "DISPLAY" | "LARGE";
+        variant: "THUMB" | "DISPLAY";
         format: "WEBP" | "JPEG";
         width: number;
         height: number;

@@ -47,6 +47,13 @@ export class PhotoController {
     return this.photoService.update(id, body);
   }
 
+  /** 从网盘重建展示变体（本地 thumb/display 丢失或损坏时的修复动作，ADR 0005）。 */
+  @Post(":id/rebuild-renditions")
+  @HttpCode(HttpStatus.OK)
+  rebuildRenditions(@Param("id") id: string): Promise<Photo> {
+    return this.photoService.rebuildRenditions(id);
+  }
+
   @Delete(":id")
   async remove(@Param("id") id: string): Promise<void> {
     await this.photoService.remove(id);

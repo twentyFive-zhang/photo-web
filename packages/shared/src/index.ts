@@ -52,7 +52,7 @@ export {
   importJobStatusSchema,
 } from "./import.js";
 export type {
-  NetdiskMissingPhoto,
+  NetdiskMasterLostPhoto,
   NetdiskPendingDelete,
   NetdiskPushFailure,
   NetdiskRepushInput,
@@ -62,7 +62,7 @@ export type {
   NetdiskStatus,
 } from "./netdisk.js";
 export {
-  netdiskMissingPhotoSchema,
+  netdiskMasterLostPhotoSchema,
   netdiskPendingDeleteSchema,
   netdiskPushFailureSchema,
   netdiskRepushInputSchema,

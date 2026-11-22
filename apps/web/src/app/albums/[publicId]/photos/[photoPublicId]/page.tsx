@@ -28,14 +28,14 @@ export async function generateMetadata({
   if (!album || !photo) {
     return { title: "照片不存在" };
   }
-  const large = renditionUrl(photo, "LARGE");
+  const display = renditionUrl(photo, "DISPLAY");
   return {
     title: photo.title ?? `${album.title} · 照片`,
     description: photo.caption ?? undefined,
     openGraph: {
       title: photo.title ?? album.title,
       description: photo.caption ?? undefined,
-      images: large ? [{ url: large }] : undefined,
+      images: display ? [{ url: display }] : undefined,
     },
   };
 }
@@ -70,7 +70,7 @@ async function PhotoContent({ params }: PageProps) {
   const prevPhoto =
     album.photos[(index - 1 + album.photos.length) % album.photos.length];
   const nextPhoto = album.photos[(index + 1) % album.photos.length];
-  const large = renditionUrl(photo, "LARGE");
+  const display = renditionUrl(photo, "DISPLAY");
   const counter = `${index + 1} / ${album.photos.length}`;
 
   return (
@@ -85,13 +85,13 @@ async function PhotoContent({ params }: PageProps) {
         <span className="text-sm text-neutral-500">{counter}</span>
       </header>
 
-      {large && (
+      {display && (
         <figure className="flex min-h-[50vh] items-center justify-center">
           {/* biome-ignore lint/performance/noImgElement: 图 URL 来自 API rendition（本地 /media），不走 next/image 优化 */}
           <img
             alt={photo.title ?? "照片"}
             className="max-h-[75vh] w-auto max-w-full rounded-lg object-contain"
-            src={large}
+            src={display}
           />
         </figure>
       )}

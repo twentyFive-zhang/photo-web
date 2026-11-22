@@ -3,9 +3,7 @@ import { ConflictException, Logger } from "@nestjs/common";
 import type { ImportItemStatus } from "@photo/shared";
 import type { Job } from "bullmq";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
-import { BaiduApiService } from "../baidu/baidu-api.service.js";
-// biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
-import { BaiduCredentialService } from "../baidu/baidu-credential.service.js";
+import { BaiduDownloadService } from "../baidu/baidu-download.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PhotoService } from "../photo/photo.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
@@ -24,8 +22,7 @@ export class ImportProcessor extends WorkerHost {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly baiduApi: BaiduApiService,
-    private readonly credentials: BaiduCredentialService,
+    private readonly baiduDownload: BaiduDownloadService,
     private readonly photoService: PhotoService,
   ) {
     super();
@@ -79,28 +76,23 @@ export class ImportProcessor extends WorkerHost {
       });
 
       // dlink 有时效：每条目下载前现取，绝不持久化
-      const accessToken = await this.credentials.getValidAccessToken();
-      const metas = await this.baiduApi.filemetas(accessToken, [fsId]);
-      const dlink = metas[0]?.dlink;
-      if (!dlink) {
-        throw new Error("未获取到下载地址");
-      }
-      const buffer = await this.baiduApi.download(dlink, accessToken);
+      const { buffer, path } = await this.baiduDownload.downloadByFsId(fsId);
 
       await this.prisma.importItem.update({
         where: { id: itemId },
         data: { status: "PROCESSING" },
       });
+      // 网盘导入（ADR 0005）：原件本就在网盘——拉一次 buffer 只生成变体，
+      // 不落本地原件、不入 staging、不触发推送；直接回写镜像映射。
       const photo = await this.photoService.createPhotoFromBuffer(
         albumId,
         buffer,
       );
-      // 原件本来就在网盘：直接回写镜像映射，上行推送无需再传
       await this.prisma.photo.update({
         where: { id: photo.id },
         data: {
           netdiskFsId: String(fsId),
-          netdiskPath: metas[0]?.path ?? null,
+          netdiskPath: path,
         },
       });
 

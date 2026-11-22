@@ -102,7 +102,7 @@ export interface AlbumPhotoRow {
   exif: Record<string, unknown> | null;
   tags: { id: string; name: string }[];
   renditions: {
-    variant: "THUMB" | "DISPLAY" | "LARGE";
+    variant: "THUMB" | "DISPLAY";
     format: string;
     key: string;
     width: number;

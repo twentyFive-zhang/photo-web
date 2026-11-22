@@ -13,6 +13,7 @@ import {
   ImagePlus,
   Pencil,
   QrCode,
+  RefreshCcw,
   Star,
   Trash2,
   X,
@@ -239,11 +240,24 @@ function AlbumDetail({ albumId }: { albumId: string }) {
     onError: fail,
   });
 
-  /** 灯箱数据：LARGE 原大图（无则 null，点击时跳过打开）。 */
+  /** 从网盘重建展示变体（本地 thumb/display 丢失或损坏时修复，ADR 0005）。 */
+  const rebuildMutation = useMutation({
+    mutationFn: (photoId: string) =>
+      apiFetch(`/admin/photos/${photoId}/rebuild-renditions`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      toast.success("已从网盘重建变体");
+      invalidate();
+    },
+    onError: fail,
+  });
+
+  /** 灯箱数据：DISPLAY 大图（1600px，无则 null，点击时跳过打开）。 */
   const lightboxPhotos = photos.map((photo) => {
-    const large = photo.renditions.find((r) => r.variant === "LARGE");
+    const display = photo.renditions.find((r) => r.variant === "DISPLAY");
     return {
-      url: large ? mediaUrl(large.key) : null,
+      url: display ? mediaUrl(display.key) : null,
       title: photo.title,
       caption: photo.caption,
     };
@@ -594,6 +608,17 @@ function AlbumDetail({ albumId }: { albumId: string }) {
                   variant="outline"
                 >
                   <Star size={12} />
+                </Button>
+                <Button
+                  aria-label="从网盘重建变体"
+                  className="rounded border border-neutral-600 px-1.5 py-0.5"
+                  disabled={rebuildMutation.isPending}
+                  onClick={() => rebuildMutation.mutate(photo.id)}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  <RefreshCcw size={12} />
                 </Button>
                 <Button
                   aria-label="删除"

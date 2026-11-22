@@ -32,14 +32,20 @@ export const netdiskPushFailureSchema = z.object({
 });
 export type NetdiskPushFailure = z.infer<typeof netdiskPushFailureSchema>;
 
-/** 网盘侧缺失（被手动删除）的站内照片。 */
-export const netdiskMissingPhotoSchema = z.object({
+/**
+ * 母本丢失告警（ADR 0005）：网盘侧已找不到该照片的镜像文件，而本地按
+ * 「首推成功即删」约定也不再有原件——母版唯一的权威副本已丢失，站内
+ * 不可自动修复，只能在设置页醒目告警。
+ */
+export const netdiskMasterLostPhotoSchema = z.object({
   photoId: z.string(),
   publicId: z.string(),
   filename: z.string(),
   albumTitle: z.string(),
 });
-export type NetdiskMissingPhoto = z.infer<typeof netdiskMissingPhotoSchema>;
+export type NetdiskMasterLostPhoto = z.infer<
+  typeof netdiskMasterLostPhotoSchema
+>;
 
 /** 下行扫描报告（持久化在 SiteSetting.netdiskScanReport）。 */
 export const netdiskScanReportSchema = z.object({
@@ -49,8 +55,8 @@ export const netdiskScanReportSchema = z.object({
   albumsCreated: z.array(z.string()),
   /** 自动导入的新照片数。 */
   importedCount: z.number(),
-  /** 网盘侧缺失的站内照片。 */
-  missing: z.array(netdiskMissingPhotoSchema),
+  /** 母本丢失（网盘侧消失且本地无原件）的照片。 */
+  masterLost: z.array(netdiskMasterLostPhotoSchema),
   error: z.string().nullable(),
 });
 export type NetdiskScanReport = z.infer<typeof netdiskScanReportSchema>;
@@ -76,7 +82,7 @@ export const netdiskScanTriggeredSchema = z.object({
 });
 export type NetdiskScanTriggered = z.infer<typeof netdiskScanTriggeredSchema>;
 
-/** 缺失/推送失败照片一键重推（清旧映射后复用既有 push 管线）。 */
+/** 推送失败照片重推（暂存原件仍在本地，复用既有 push 管线）。 */
 export const netdiskRepushInputSchema = z.object({
   photoIds: z.array(z.string().min(1)).min(1).max(2000),
 });

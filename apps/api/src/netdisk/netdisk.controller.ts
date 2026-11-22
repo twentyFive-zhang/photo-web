@@ -140,12 +140,14 @@ export class NetdiskController {
   }
 
   /**
-   * 缺失/推送失败一键重推：清旧映射后复用既有 push 管线（幂等，jobId 去重）。
-   * body.photoIds 来自扫描报告 missing 列表或推送失败列表。
+   * 推送失败一键重推：清旧映射后复用既有 push 管线（幂等，jobId 去重）。
+   * 仅适用于推送失败的照片（暂存原件仍在本地，可重试）；网盘侧母本丢失的
+   * 照片本地无原件，设置页只告警不提供重推（ADR 0005）。
+   * body.photoIds 来自推送失败列表。
    */
-  @Post("missing/repush")
+  @Post("push-failures/repush")
   @HttpCode(HttpStatus.OK)
-  async repushMissing(
+  async repushFailed(
     @Body(new ZodValidationPipe(netdiskRepushInputSchema))
     body: NetdiskRepushInput,
   ): Promise<NetdiskRepushResult> {

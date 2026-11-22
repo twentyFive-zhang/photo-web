@@ -2,7 +2,7 @@ import type { PublicPhoto } from "@photo/shared";
 
 export function renditionUrl(
   photo: PublicPhoto,
-  variant: "THUMB" | "DISPLAY" | "LARGE",
+  variant: "THUMB" | "DISPLAY",
 ): string | null {
   return photo.renditions.find((r) => r.variant === variant)?.url ?? null;
 }
