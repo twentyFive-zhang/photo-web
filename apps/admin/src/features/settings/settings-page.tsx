@@ -20,6 +20,7 @@ import { useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -249,6 +250,14 @@ function NetdiskSection({
   const pushing =
     status !== undefined && status.syncedCount < status.totalPhotos;
 
+  const [pushAllOpen, setPushAllOpen] = useState(false);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [repushAllOpen, setRepushAllOpen] = useState(false);
+  const [deleteFileTarget, setDeleteFileTarget] = useState<{
+    id: string;
+    filename: string;
+  } | null>(null);
+
   return (
     <Card>
       <CardHeader>
@@ -293,15 +302,7 @@ function NetdiskSection({
               </Button>
               <Button
                 disabled={pushAllMutation.isPending || pushing}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `将 ${status.totalPhotos - status.syncedCount} 张未同步照片推送到网盘镜像？`,
-                    )
-                  ) {
-                    pushAllMutation.mutate();
-                  }
-                }}
+                onClick={() => setPushAllOpen(true)}
                 type="button"
                 variant="outline"
               >
@@ -310,11 +311,7 @@ function NetdiskSection({
               </Button>
               <Button
                 disabled={disconnectMutation.isPending}
-                onClick={() => {
-                  if (window.confirm("断开后上传不再自动推送，确定？")) {
-                    disconnectMutation.mutate();
-                  }
-                }}
+                onClick={() => setDisconnectOpen(true)}
                 type="button"
                 variant="ghost"
               >
@@ -372,17 +369,7 @@ function NetdiskSection({
                     ))}
                     <Button
                       disabled={repushMutation.isPending}
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            `把缺失的 ${report.missing.length} 张照片重新推送到网盘？`,
-                          )
-                        ) {
-                          repushMutation.mutate(
-                            report.missing.map((photo) => photo.photoId),
-                          );
-                        }
-                      }}
+                      onClick={() => setRepushAllOpen(true)}
                       size="sm"
                       type="button"
                       variant="outline"
@@ -452,15 +439,7 @@ function NetdiskSection({
                     </span>
                     <Button
                       disabled={confirmDeleteMutation.isPending}
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            `删除网盘文件 ${item.filename}？不可恢复。`,
-                          )
-                        ) {
-                          confirmDeleteMutation.mutate(item.id);
-                        }
-                      }}
+                      onClick={() => setDeleteFileTarget(item)}
                       size="sm"
                       type="button"
                       variant="destructive"
@@ -483,6 +462,50 @@ function NetdiskSection({
           </div>
         )}
       </CardContent>
+
+      <ConfirmDialog
+        confirmText="推送"
+        description={`将 ${status ? status.totalPhotos - status.syncedCount : 0} 张未同步照片推送到网盘镜像？`}
+        onConfirm={() => pushAllMutation.mutateAsync()}
+        onOpenChange={setPushAllOpen}
+        open={pushAllOpen}
+        title="全量推送"
+      />
+      <ConfirmDialog
+        confirmText="断开"
+        description="断开后上传不再自动推送，确定？"
+        onConfirm={() => disconnectMutation.mutateAsync()}
+        onOpenChange={setDisconnectOpen}
+        open={disconnectOpen}
+        title="断开网盘连接"
+      />
+      <ConfirmDialog
+        confirmText="重推"
+        description={`把缺失的 ${report ? report.missing.length : 0} 张照片重新推送到网盘？`}
+        onConfirm={() =>
+          repushMutation.mutateAsync(
+            report ? report.missing.map((photo) => photo.photoId) : [],
+          )
+        }
+        onOpenChange={setRepushAllOpen}
+        open={repushAllOpen}
+        title="全部重推"
+      />
+      {deleteFileTarget !== null && (
+        <ConfirmDialog
+          danger
+          confirmText="删除"
+          description={`删除网盘文件 ${deleteFileTarget.filename}？不可恢复。`}
+          onConfirm={() =>
+            confirmDeleteMutation.mutateAsync(deleteFileTarget.id)
+          }
+          onOpenChange={(open) => {
+            if (!open) setDeleteFileTarget(null);
+          }}
+          open
+          title="删除网盘文件"
+        />
+      )}
     </Card>
   );
 }

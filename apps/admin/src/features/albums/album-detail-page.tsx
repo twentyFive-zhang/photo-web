@@ -21,6 +21,7 @@ import { type ChangeEvent, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PhotoLightbox } from "@/components/photo-lightbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -84,6 +85,8 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   const [viewing, setViewing] = useState<number | null>(null);
   /** 选中即触发移动后 remount，恢复「移动到…」占位。 */
   const [moveSelectKey, setMoveSelectKey] = useState(0);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [deletePhotoId, setDeletePhotoId] = useState<string | null>(null);
 
   const invalidate = useInvalidateAlbum(albumId);
 
@@ -401,11 +404,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
             </Select>
             <Button
               disabled={batchDeleteMutation.isPending}
-              onClick={() => {
-                if (confirm(`确定删除选中的 ${selected.size} 张照片？`)) {
-                  batchDeleteMutation.mutate([...selected]);
-                }
-              }}
+              onClick={() => setBatchDeleteOpen(true)}
               type="button"
               variant="destructive"
             >
@@ -438,6 +437,30 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         onOpenChange={setShowImport}
         open={showImport}
       />
+
+      <ConfirmDialog
+        danger
+        confirmText="删除"
+        description={`确定删除选中的 ${selected.size} 张照片？`}
+        onConfirm={() => batchDeleteMutation.mutateAsync([...selected])}
+        onOpenChange={setBatchDeleteOpen}
+        open={batchDeleteOpen}
+        title="批量删除照片"
+      />
+
+      {deletePhotoId !== null && (
+        <ConfirmDialog
+          danger
+          confirmText="删除"
+          description="确定删除这张照片？"
+          onConfirm={() => deleteMutation.mutateAsync(deletePhotoId)}
+          onOpenChange={(open) => {
+            if (!open) setDeletePhotoId(null);
+          }}
+          open
+          title="删除照片"
+        />
+      )}
 
       {/* 大图灯箱 */}
       {viewing !== null && (
@@ -576,11 +599,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
                   aria-label="删除"
                   className="rounded border border-neutral-600 px-1.5 py-0.5"
                   disabled={deleteMutation.isPending}
-                  onClick={() => {
-                    if (confirm("确定删除这张照片？")) {
-                      deleteMutation.mutate(photo.id);
-                    }
-                  }}
+                  onClick={() => setDeletePhotoId(photo.id)}
                   size="sm"
                   type="button"
                   variant="outline"
