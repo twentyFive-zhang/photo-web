@@ -115,16 +115,19 @@ export function AlbumsPage() {
               className="group relative rounded-2xl border border-neutral-800 p-5 transition-colors hover:border-neutral-500"
               key={album.id}
             >
-              {/* 拉伸链接：整卡可点跳详情；操作区（角标+删除）浮在其上 */}
+              {/* 拉伸链接：整卡可点跳详情；操作区浮在其上（relative z-10 抬升
+                  绘制序，否则删除按钮被链接盖住点不到）。容器整体
+                  pointer-events-none，仅删除按钮 auto——标题/角标点击仍穿透
+                  到链接跳详情 */}
               <Link
                 aria-label={`打开专辑 ${album.title}`}
                 className="absolute inset-0 rounded-2xl"
                 params={{ albumId: album.id }}
                 to="/albums/$albumId"
               />
-              <div className="pointer-events-none flex items-start justify-between gap-3">
+              <div className="pointer-events-none relative z-10 flex items-start justify-between gap-3">
                 <span className="truncate font-medium">{album.title}</span>
-                <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
+                <div className="flex shrink-0 items-center gap-1.5">
                   <Badge
                     variant={
                       album.visibility === "PUBLIC" ? "success" : "default"
@@ -134,6 +137,7 @@ export function AlbumsPage() {
                   </Badge>
                   <Button
                     aria-label={`删除专辑 ${album.title}`}
+                    className="pointer-events-auto"
                     disabled={deleteMutation.isPending}
                     onClick={() => setDeleteTarget(album)}
                     size="icon"
