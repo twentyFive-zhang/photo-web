@@ -281,6 +281,8 @@ export class PhotoService {
     if (!photo) {
       throw new NotFoundException("照片不存在");
     }
+    // 竞态第一道闸：清掉排队中的上行推送任务（照片已删，推上去是孤儿文件）
+    await this.netdisk.removeQueuedPushJobs([id]);
     // 已镜像照片：网盘文件不删，先登记托管归档再删行（登记失败即报错，
     // 照片未动可重试；JIANGLIUER-102，站内删除不碰网盘）
     if (photo.netdiskFsId && photo.netdiskPath) {
@@ -327,12 +329,15 @@ export class PhotoService {
     const photos = await this.prisma.photo.findMany({
       where: { id: { in: photoIds } },
       select: {
+        id: true,
         originalKey: true,
         renditions: { select: { key: true } },
         netdiskFsId: true,
         netdiskPath: true,
       },
     });
+    // 竞态第一道闸：清掉排队中的上行推送任务（照片已删，推上去是孤儿文件）
+    await this.netdisk.removeQueuedPushJobs(photos.map((photo) => photo.id));
     // 已镜像照片：网盘文件不删，先登记托管归档再删行（登记失败即报错，
     // 照片未动可重试；JIANGLIUER-102，站内删除不碰网盘）
     const mirrored = photos.filter(
