@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import {
   BadRequestException,
   Body,
@@ -9,26 +13,68 @@ import {
   NotFoundException,
   Param,
   Post,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
+// biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
+import { ConfigService } from "@nestjs/config";
+import { FileInterceptor } from "@nestjs/platform-express";
 import type {
+  NetdiskCreateFolderInput,
+  NetdiskCreateFolderResult,
+  NetdiskDeleteInput,
+  NetdiskDeleteResult,
   NetdiskRepushInput,
   NetdiskRepushResult,
   NetdiskStatus,
+  NetdiskUploadAccepted,
+  NetdiskUploadTasks,
 } from "@photo/shared";
-import { netdiskRepushInputSchema } from "@photo/shared";
+import {
+  netdiskCreateFolderInputSchema,
+  netdiskDeleteInputSchema,
+  netdiskRepushInputSchema,
+  sanitizeNetdiskName,
+} from "@photo/shared";
+import { diskStorage } from "multer";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { BaiduApiError, BaiduApiService } from "../baidu/baidu-api.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { BaiduCredentialService } from "../baidu/baidu-credential.service.js";
+import {
+  assertManagedPath,
+  baiduRootOf,
+  normalizeManagedDir,
+} from "../baidu/baidu-paths.js";
 import { AdminGuard } from "../common/admin.guard.js";
 import { ZodValidationPipe } from "../common/zod-validation.pipe.js";
+import type { Env } from "../config/env.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PrismaService } from "../prisma/prisma.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { NetdiskSyncService } from "./netdisk-sync.service.js";
 
-/** 百度网盘镜像同步：状态、手动扫描、全量推送、待确认删除。 */
+/** 单文件上限 2GB（超限 multer LIMIT_FILE_SIZE → Nest 413 PayloadTooLarge）。 */
+const MAX_NETDISK_UPLOAD_SIZE = 2 * 1024 ** 3;
+
+/**
+ * 上传临时落盘目录（os.tmpdir 下）： multer 先把文件写到这里，
+ * 入队后由 worker 分片推百度，成功即删。系统清理 /tmp 时残留任务会
+ * 以「临时文件已不存在」失败，重新上传即可。
+ */
+const UPLOAD_TEMP_DIR = resolve(tmpdir(), "photo-netdisk-uploads");
+
+// multer 2.x 对字符串 destination 自带 recursive mkdir
+const uploadStorage = diskStorage({
+  destination: UPLOAD_TEMP_DIR,
+  // 落盘文件名随机化（originalname 只作元数据），杜绝路径注入
+  filename: (_req, _file, callback) => {
+    callback(null, `${randomUUID()}.part`);
+  },
+});
+
+/** 百度网盘镜像同步：状态、手动扫描、全量推送、待确认删除、直接管理。 */
 @Controller("admin/netdisk")
 @UseGuards(AdminGuard)
 export class NetdiskController {
@@ -37,7 +83,13 @@ export class NetdiskController {
     private readonly baiduApi: BaiduApiService,
     private readonly credentials: BaiduCredentialService,
     private readonly sync: NetdiskSyncService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
+
+  /** 写操作根：与浏览同一边界（配置 BAIDU_APP_NAME 时锁定应用目录）。 */
+  private get writeRoot(): string {
+    return baiduRootOf(this.config.get("BAIDU_APP_NAME", { infer: true }));
+  }
 
   @Get("status")
   async status(): Promise<NetdiskStatus> {
@@ -209,5 +261,120 @@ export class NetdiskController {
       throw new NotFoundException("待确认删除项不存在");
     }
     await this.prisma.netdiskPendingDelete.delete({ where: { id } });
+  }
+
+  // ---------- 直接管理（新建/删除/直传，JIANGLIUER-94，ADR 0004） ----------
+
+  /**
+   * 新建文件夹：落点 = dir（当前浏览目录，空 = 应用根）。
+   * 同名冲突（百度 create rtype=2 → errno -8）返回 409。
+   */
+  @Post("folders")
+  @HttpCode(HttpStatus.OK)
+  async createFolder(
+    @Body(new ZodValidationPipe(netdiskCreateFolderInputSchema))
+    body: NetdiskCreateFolderInput,
+  ): Promise<NetdiskCreateFolderResult> {
+    if (!(await this.credentials.isConnected())) {
+      throw new ConflictException("尚未连接百度网盘，请先授权");
+    }
+    const name = sanitizeNetdiskName(body.name);
+    const path = `${normalizeManagedDir(this.writeRoot, body.dir)}/${name}`;
+    try {
+      await this.credentials.withAccessToken((token) =>
+        this.baiduApi.create(token, { path, isdir: true, rtype: 2 }),
+      );
+    } catch (error) {
+      if (error instanceof BaiduApiError && error.errno === -8) {
+        throw new ConflictException("同名文件夹已存在");
+      }
+      throw error;
+    }
+    return { path };
+  }
+
+  /**
+   * 删除（单删/批删/文件夹级联共用）：百度默认删除（进回收站），
+   * 镜像联动即时清映射（变回「未推送」，全量推送/按专辑补推可恢复）；
+   * 托管登记同步移除。不动 NetdiskPendingDelete 表。
+   */
+  @Post("entries/delete")
+  @HttpCode(HttpStatus.OK)
+  async deleteEntries(
+    @Body(new ZodValidationPipe(netdiskDeleteInputSchema))
+    body: NetdiskDeleteInput,
+  ): Promise<NetdiskDeleteResult> {
+    if (!(await this.credentials.isConnected())) {
+      throw new ConflictException("尚未连接百度网盘，请先授权");
+    }
+    const paths = [
+      ...new Set(body.paths.map((p) => assertManagedPath(this.writeRoot, p))),
+    ];
+    if (paths.length === 0) {
+      throw new BadRequestException("缺少要删除的路径");
+    }
+    try {
+      await this.credentials.withAccessToken((token) =>
+        this.baiduApi.filemanager(
+          token,
+          "delete",
+          paths.map((path) => ({ path })),
+        ),
+      );
+    } catch (error) {
+      // 文件/目录已不存在 = 目标状态已达成（清理映射仍然有意义）
+      if (!(error instanceof BaiduApiError && error.errno === -9)) {
+        throw error;
+      }
+    }
+    const clearedPhotos = await this.sync.clearMirrorMappings(paths);
+    await this.sync.removeManagedEntriesByPaths(paths);
+    return { deleted: paths.length, clearedPhotos };
+  }
+
+  /** 直接上传（任意格式托管文件）：临时落盘 → 队列分片推百度 → 页面看任务状态。 */
+  @Post("files/upload")
+  @UseInterceptors(
+    FileInterceptor("file", {
+      storage: uploadStorage,
+      limits: { fileSize: MAX_NETDISK_UPLOAD_SIZE },
+    }),
+  )
+  async uploadFile(
+    @UploadedFile() file?: Express.Multer.File,
+    @Body("dir") dir?: string,
+  ): Promise<NetdiskUploadAccepted> {
+    if (!file) {
+      throw new BadRequestException("缺少文件字段 file");
+    }
+    if (file.size === 0) {
+      await this.removeTempFile(file.path);
+      throw new BadRequestException("不能上传空文件");
+    }
+    if (!(await this.credentials.isConnected())) {
+      await this.removeTempFile(file.path);
+      throw new ConflictException("尚未连接百度网盘，请先授权");
+    }
+    const filename = sanitizeNetdiskName(file.originalname);
+    const destPath = `${normalizeManagedDir(this.writeRoot, dir)}/${filename}`;
+    const taskId = randomUUID();
+    await this.sync.enqueueManagedUpload({
+      taskId,
+      tempPath: file.path,
+      destPath,
+      filename,
+      size: file.size,
+    });
+    return { taskId };
+  }
+
+  /** 最近托管上传任务（BullMQ 任务状态，不入库）。 */
+  @Get("uploads")
+  async uploads(): Promise<NetdiskUploadTasks> {
+    return this.sync.listManagedUploads();
+  }
+
+  private async removeTempFile(path: string): Promise<void> {
+    await unlink(path).catch(() => undefined);
   }
 }

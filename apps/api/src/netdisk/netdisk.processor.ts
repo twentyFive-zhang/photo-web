@@ -1,3 +1,4 @@
+import { unlink } from "node:fs/promises";
 import {
   InjectQueue,
   OnWorkerEvent,
@@ -32,10 +33,15 @@ const IMPORT_BULL_JOB_OPTIONS = {
 type PushPayload = Extract<NetdiskJobPayload, { type: "push" }>;
 type MovePayload = Extract<NetdiskJobPayload, { type: "move" }>;
 type RenamePayload = Extract<NetdiskJobPayload, { type: "renameAlbum" }>;
+type UploadManagedPayload = Extract<
+  NetdiskJobPayload,
+  { type: "uploadManaged" }
+>;
 
 /**
  * 网盘同步 worker：push（上行三阶段上传）/ scan（下行增量 + 缺失报告）/
- * move / renameAlbum（改名与换专辑传播）。删除不自动传播（ADR 0002）。
+ * move / renameAlbum（改名与移动传播）/ uploadManaged（托管文件直传，
+ * ADR 0004）。删除不自动传播（ADR 0002）。
  * 每日扫描的 repeatable 任务由 NetdiskSyncService 注册。
  */
 @Processor("netdisk-sync", { concurrency: 2 })
@@ -62,6 +68,8 @@ export class NetdiskProcessor extends WorkerHost {
         return this.runMove(job.data as MovePayload);
       case "renameAlbum":
         return this.runRenameAlbum(job.data as RenamePayload);
+      case "uploadManaged":
+        return this.runManagedUpload(job as Job<UploadManagedPayload>);
     }
   }
 
@@ -109,6 +117,36 @@ export class NetdiskProcessor extends WorkerHost {
         );
       }
     }
+  }
+
+  /** 托管文件直传：进度上报给任务（页面轮询展示），成功后清临时文件。 */
+  private async runManagedUpload(
+    job: Job<UploadManagedPayload>,
+  ): Promise<void> {
+    await this.sync.uploadManagedFile(job.data, (percent) => {
+      void job.updateProgress(percent).catch(() => undefined);
+    });
+  }
+
+  /**
+   * 托管上传最终失败：清理临时文件（重试期间保留，磁盘占着 2GB 不合适）。
+   * 任务状态与错误已留存在 BullMQ failed 记录里（removeOnFail 7 天）。
+   */
+  @OnWorkerEvent("failed")
+  onManagedUploadFailedFinal(
+    job: Job<NetdiskJobPayload> | undefined,
+    error: Error,
+  ): void {
+    if (
+      job?.data.type !== "uploadManaged" ||
+      job.attemptsMade < (job.opts.attempts ?? 1)
+    ) {
+      return;
+    }
+    this.logger.warn(
+      `托管文件上传失败（重试耗尽）：${job.data.filename} ${error.message}`,
+    );
+    unlink(job.data.tempPath).catch(() => undefined);
   }
 
   // ---- 下行扫描 ----
@@ -176,6 +214,14 @@ export class NetdiskProcessor extends WorkerHost {
     }[] = [];
     await this.walk(appDir, seen, knownFsIds, newFiles);
 
+    // 托管文件登记自愈（网盘上已不存在的登记清除）+ 过滤：托管文件
+    // 不进 Photo 表、不进相册（ADR 0004，直接上传通道的文件）
+    await this.sync.pruneManagedEntries(seen);
+    const managedFsIds = await this.sync.listManagedFsIds();
+    const importableFiles = newFiles.filter(
+      (file) => !managedFsIds.has(String(file.fsId)),
+    );
+
     // 新文件按所在文件夹归到专辑（目录名 = 规范化后的专辑标题）
     const albums = await this.prisma.album.findMany({
       select: { id: true, title: true },
@@ -187,7 +233,7 @@ export class NetdiskProcessor extends WorkerHost {
     const perAlbum = new Map<string, { fsId: number; filename: string }[]>();
     const appDirName = appDir.split("/").pop() ?? "";
 
-    for (const file of newFiles) {
+    for (const file of importableFiles) {
       // 应用根目录下的散文件没有专辑语义，跳过（报告中体现为不导入）
       if (file.dirName === appDirName) {
         continue;

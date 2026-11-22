@@ -379,33 +379,47 @@ export class BaiduApiService {
     assertOk(data.error_code ?? data.errno ?? 0, "上传分片");
   }
 
-  /** 上传第三阶段：create 提交合并，返回 fs_id。 */
+  /**
+   * 上传第三阶段：create 提交合并，返回 fs_id（目录创建可能不返回，为 null）。
+   * isdir=true 时直接创建目录（无需分片参数）；rtype 控制同名策略，
+   * 默认 3 = 覆盖（文件上传既定行为），新建目录传 2（冲突报错 errno -8）。
+   */
   async create(
     accessToken: string,
     input: {
       path: string;
-      size: number;
-      uploadid: string;
-      blockList: string[];
+      isdir?: boolean;
+      size?: number;
+      uploadid?: string;
+      blockList?: string[];
+      rtype?: number;
     },
-  ): Promise<number> {
+  ): Promise<number | null> {
     const query = new URLSearchParams({
       method: "create",
       access_token: accessToken,
     });
     const body = new URLSearchParams({
       path: input.path,
-      size: String(input.size),
-      isdir: "0",
-      block_list: JSON.stringify(input.blockList),
-      uploadid: input.uploadid,
-      rtype: "3",
+      isdir: input.isdir ? "1" : "0",
+      rtype: String(input.rtype ?? 3),
     });
+    if (!input.isdir) {
+      if (input.size === undefined || !input.uploadid || !input.blockList) {
+        throw new BaiduApiError("文件 create 缺少 size/uploadid/blockList", -1);
+      }
+      body.set("size", String(input.size));
+      body.set("uploadid", input.uploadid);
+      body.set("block_list", JSON.stringify(input.blockList));
+    }
     const response = await this.postForm(query, body); // 提交上传
     const data = (await response.json()) as BaiduCreateResponse;
-    assertOk(data.errno, "提交上传");
+    assertOk(data.errno, input.isdir ? "创建目录" : "提交上传");
     if (!data.fs_id) {
-      throw new BaiduApiError("提交上传未返回 fs_id", data.errno);
+      if (!input.isdir) {
+        throw new BaiduApiError("提交上传未返回 fs_id", data.errno);
+      }
+      return null;
     }
     return data.fs_id;
   }

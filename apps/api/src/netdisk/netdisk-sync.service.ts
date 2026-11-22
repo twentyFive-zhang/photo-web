@@ -1,10 +1,19 @@
 import { createHash } from "node:crypto";
+import { open, unlink } from "node:fs/promises";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { ConfigService } from "@nestjs/config";
-import type { NetdiskScanReport } from "@photo/shared";
-import { netdiskScanReportSchema } from "@photo/shared";
+import type {
+  NetdiskManagedFiles,
+  NetdiskScanReport,
+  NetdiskUploadTask,
+  NetdiskUploadTasks,
+} from "@photo/shared";
+import {
+  netdiskManagedFilesSchema,
+  netdiskScanReportSchema,
+} from "@photo/shared";
 import type { Queue } from "bullmq";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import {
@@ -31,12 +40,32 @@ export type NetdiskJobPayload =
       albumId: string;
       oldTitle: string;
       newTitle: string;
+    }
+  | {
+      /** 托管文件直接上传（临时文件已落盘，分片推百度；ADR 0004）。 */
+      type: "uploadManaged";
+      taskId: string;
+      tempPath: string;
+      destPath: string;
+      filename: string;
+      size: number;
     };
 
 const BULL_JOB_OPTIONS = {
   attempts: 3,
   backoff: { type: "exponential" as const, delay: 5_000 },
   removeOnComplete: true,
+};
+
+/**
+ * 托管上传任务专用选项：完成/失败的任务保留 7 天（页面上看「最近任务状态」），
+ * 但限 500 条防失控；照片推送类任务依旧即时清理（它们的可见性走 DB）。
+ */
+const MANAGED_UPLOAD_JOB_OPTIONS = {
+  attempts: 3,
+  backoff: { type: "exponential" as const, delay: 5_000 },
+  removeOnComplete: { age: 7 * 24 * 3600, count: 500 },
+  removeOnFail: { age: 7 * 24 * 3600 },
 };
 
 /**
@@ -68,6 +97,8 @@ export class NetdiskSyncService implements OnModuleInit {
   /** 应用目录（/apps/{应用名}）解析缓存。 */
   private appDirCache: { dir: string; resolvedAt: number } | null = null;
   private pushAllState: PushAllState | null = null;
+  /** 托管文件登记（SiteSetting JSON 列）读改写的进程内串行化。 */
+  private managedLock: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -151,6 +182,265 @@ export class NetdiskSyncService implements OnModuleInit {
         },
       });
     }
+  }
+
+  /**
+   * ---------- 托管文件（直接上传，ADR 0004） ----------
+   *
+   * 托管文件不进 Photo 表、不进相册；仅在 SiteSetting.netdiskManagedFiles
+   * 登记 fsId/path，供下行扫描跳过。登记随扫描自愈修剪（网盘上已不存在的
+   * 条目清除），页内删除时按路径同步移除。
+   */
+
+  /** 托管登记读改写串行化（单进程内互斥；跨进程无并发写入方）。 */
+  private withManagedLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.managedLock.then(fn, fn);
+    this.managedLock = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /** 读托管登记（JSON 损坏视为空，不阻塞照片流程）。 */
+  private async readManagedFiles(): Promise<NetdiskManagedFiles> {
+    const setting = await this.prisma.siteSetting.findUnique({
+      where: { id: "singleton" },
+      select: { netdiskManagedFiles: true },
+    });
+    const parsed = netdiskManagedFilesSchema.safeParse(
+      setting?.netdiskManagedFiles,
+    );
+    return parsed.success ? parsed.data : { entries: [] };
+  }
+
+  private async writeManagedFiles(files: NetdiskManagedFiles): Promise<void> {
+    await this.prisma.siteSetting.upsert({
+      where: { id: "singleton" },
+      update: { netdiskManagedFiles: files },
+      create: { id: "singleton", netdiskManagedFiles: files },
+    });
+  }
+
+  /** 上传成功后登记托管文件（同 fsId 幂等，覆盖更新 path）。 */
+  async addManagedEntry(entry: { fsId: string; path: string }): Promise<void> {
+    await this.withManagedLock(async () => {
+      const files = await this.readManagedFiles();
+      const rest = files.entries.filter((item) => item.fsId !== entry.fsId);
+      await this.writeManagedFiles({
+        entries: [...rest, { ...entry, uploadedAt: new Date().toISOString() }],
+      });
+    });
+  }
+
+  /** 页内删除后按路径移除托管登记（文件精确匹配 + 目录前缀匹配）。 */
+  async removeManagedEntriesByPaths(paths: string[]): Promise<void> {
+    if (paths.length === 0) {
+      return;
+    }
+    await this.withManagedLock(async () => {
+      const files = await this.readManagedFiles();
+      const prefixes = paths.map((path) => `${path}/`);
+      const kept = files.entries.filter(
+        (entry) =>
+          !paths.includes(entry.path) &&
+          !prefixes.some((prefix) => entry.path.startsWith(prefix)),
+      );
+      if (kept.length !== files.entries.length) {
+        await this.writeManagedFiles({ entries: kept });
+      }
+    });
+  }
+
+  /** 扫描后自愈：网盘上已不存在的托管登记清除。 */
+  async pruneManagedEntries(seenFsIds: Set<string>): Promise<void> {
+    await this.withManagedLock(async () => {
+      const files = await this.readManagedFiles();
+      const kept = files.entries.filter((entry) => seenFsIds.has(entry.fsId));
+      if (kept.length !== files.entries.length) {
+        await this.writeManagedFiles({ entries: kept });
+      }
+    });
+  }
+
+  /** 下行扫描用：当前托管文件 fsId 集合（这些文件不进任何照片流程）。 */
+  async listManagedFsIds(): Promise<Set<string>> {
+    const files = await this.readManagedFiles();
+    return new Set(files.entries.map((entry) => entry.fsId));
+  }
+
+  /**
+   * 删除网盘条目（单/批/夹通用）后的镜像联动：路径精确匹配或目录前缀
+   * 匹配的照片清 netdiskFsId/netdiskPath（变回「未推送」，全量推送/按专辑
+   * 补推可恢复镜像）。不动 NetdiskPendingDelete 表（ADR 0004）。
+   */
+  async clearMirrorMappings(paths: string[]): Promise<number> {
+    if (paths.length === 0) {
+      return 0;
+    }
+    const conditions = paths.flatMap((path) => [
+      { netdiskPath: path },
+      { netdiskPath: { startsWith: `${path}/` } },
+    ]);
+    const result = await this.prisma.photo.updateMany({
+      where: { netdiskFsId: { not: null }, OR: conditions },
+      data: { netdiskFsId: null, netdiskPath: null },
+    });
+    return result.count;
+  }
+
+  /** 托管文件上传入队：临时文件路径入 BullMQ，页面上看任务状态。 */
+  async enqueueManagedUpload(input: {
+    taskId: string;
+    tempPath: string;
+    destPath: string;
+    filename: string;
+    size: number;
+  }): Promise<void> {
+    await this.queue.add(
+      "netdisk-sync",
+      { type: "uploadManaged", ...input },
+      {
+        ...MANAGED_UPLOAD_JOB_OPTIONS,
+        jobId: `managed-upload-${input.taskId}`,
+      },
+    );
+  }
+
+  /** 托管上传任务视图（最近 50 条，页面轮询「后台上传中」状态）。 */
+  async listManagedUploads(): Promise<NetdiskUploadTasks> {
+    const jobs = await this.queue.getJobs(
+      ["active", "waiting", "delayed", "failed", "completed"],
+      0,
+      99,
+    );
+    const tasks: NetdiskUploadTask[] = [];
+    for (const job of jobs) {
+      if (job.data.type !== "uploadManaged") {
+        continue;
+      }
+      const state = await job.getState();
+      tasks.push({
+        id: job.id ?? "",
+        filename: job.data.filename,
+        destPath: job.data.destPath,
+        size: job.data.size,
+        state:
+          state === "active"
+            ? "active"
+            : state === "completed"
+              ? "completed"
+              : state === "failed"
+                ? "failed"
+                : "waiting",
+        progress: typeof job.progress === "number" ? job.progress : 0,
+        error: job.failedReason ?? null,
+        createdAt: new Date(job.timestamp).toISOString(),
+      });
+    }
+    tasks.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    return { tasks: tasks.slice(0, 50) };
+  }
+
+  /**
+   * 托管文件上传执行体（uploadManaged 任务）：
+   * 流式算分片 MD5 → precreate → 4MB 分片 superfile2 → create →
+   * 登记托管条目。成功后清理临时文件；失败保留供重试，最终失败由
+   * processor 清理。onProgress 上报分片进度（页面任务列表展示）。
+   */
+  async uploadManagedFile(
+    input: {
+      tempPath: string;
+      destPath: string;
+      size: number;
+    },
+    onProgress?: (percent: number) => void,
+  ): Promise<void> {
+    const handle = await open(input.tempPath, "r").catch(() => {
+      throw new Error("上传临时文件已不存在，请重新上传");
+    });
+
+    try {
+      // 分片 MD5 + 整体/首 256KB MD5（秒传探测参数，与照片推送同参数）
+      const chunk = Buffer.alloc(BAIDU_CHUNK_SIZE);
+      const blockList: string[] = [];
+      const contentHash = createHash("md5");
+      for (let offset = 0; offset < input.size; offset += BAIDU_CHUNK_SIZE) {
+        const { bytesRead } = await handle.read(
+          chunk,
+          0,
+          BAIDU_CHUNK_SIZE,
+          offset,
+        );
+        if (bytesRead === 0) {
+          throw new Error("临时文件内容比登记大小短，请重新上传");
+        }
+        const slice = chunk.subarray(0, bytesRead);
+        blockList.push(createHash("md5").update(slice).digest("hex"));
+        contentHash.update(slice);
+      }
+      const contentMd5 = contentHash.digest("hex");
+      const head = Buffer.alloc(Math.min(input.size, 256 * 1024));
+      await handle.read(head, 0, head.length, 0);
+      const sliceMd5 = createHash("md5").update(head).digest("hex");
+
+      const fsId = await this.credentials.withAccessToken(async (token) => {
+        const pre = await this.baiduApi.precreate(token, {
+          path: input.destPath,
+          size: input.size,
+          blockList,
+          contentMd5,
+          sliceMd5,
+        });
+        const host = await this.baiduApi.locateupload(
+          token,
+          input.destPath,
+          pre.uploadid,
+        );
+        for (let seq = 0; seq < blockList.length; seq++) {
+          const { bytesRead } = await handle.read(
+            chunk,
+            0,
+            BAIDU_CHUNK_SIZE,
+            seq * BAIDU_CHUNK_SIZE,
+          );
+          if (bytesRead === 0) {
+            break;
+          }
+          if (bytesRead < BAIDU_CHUNK_SIZE && seq !== blockList.length - 1) {
+            throw new Error("临时文件内容与登记大小不一致，请重新上传");
+          }
+          await this.baiduApi.superfile2(token, {
+            host,
+            path: input.destPath,
+            uploadid: pre.uploadid,
+            partseq: seq,
+            chunk: chunk.subarray(0, bytesRead),
+          });
+          onProgress?.(Math.round(((seq + 1) / blockList.length) * 100));
+        }
+        const created = await this.baiduApi.create(token, {
+          path: input.destPath,
+          isdir: false,
+          size: input.size,
+          uploadid: pre.uploadid,
+          blockList,
+        });
+        if (created === null) {
+          throw new BaiduApiError("提交上传未返回 fs_id", -1);
+        }
+        return created;
+      });
+
+      await this.addManagedEntry({
+        fsId: String(fsId),
+        path: input.destPath,
+      });
+      this.logger.log(`托管文件已上传网盘：${input.destPath}`);
+    } finally {
+      await handle.close();
+    }
+    await unlink(input.tempPath).catch(() => undefined);
   }
 
   /**
@@ -485,11 +775,15 @@ export class NetdiskSyncService implements OnModuleInit {
       }
       return this.baiduApi.create(token, {
         path,
+        isdir: false,
         size: buffer.length,
         uploadid: pre.uploadid,
         blockList,
       });
     });
+    if (fsId === null) {
+      throw new BaiduApiError("提交上传未返回 fs_id", -1);
+    }
 
     await this.prisma.photo.update({
       where: { id: photoId },
