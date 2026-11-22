@@ -1,5 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
+  type NetdiskManagedFiles,
   type NetdiskScanTriggered,
   type NetdiskStatus,
   type SiteSetting,
@@ -7,6 +8,7 @@ import {
 } from "@photo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Archive,
   Cloud,
   Plus,
   QrCode,
@@ -137,6 +139,7 @@ function SettingsForm() {
           updateMutation.mutate({ netdiskDailyScan })
         }
       />
+      <NetdiskArchiveSection />
     </main>
   );
 }
@@ -221,30 +224,6 @@ function NetdiskSection({
     onError: (err) => toast.error(err.message),
   });
 
-  const confirmDeleteMutation = useMutation({
-    mutationFn: (id: string) =>
-      apiFetch<void>(`/admin/netdisk/pending-deletes/${id}/confirm`, {
-        method: "POST",
-      }),
-    onSuccess: () => {
-      toast.success("网盘文件已删除");
-      queryClient.invalidateQueries({ queryKey });
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  const dismissDeleteMutation = useMutation({
-    mutationFn: (id: string) =>
-      apiFetch<void>(`/admin/netdisk/pending-deletes/${id}/dismiss`, {
-        method: "POST",
-      }),
-    onSuccess: () => {
-      toast.success("已保留网盘副本");
-      queryClient.invalidateQueries({ queryKey });
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
   const status = statusQuery.data;
   const report = status?.scanReport;
   const pushing =
@@ -252,10 +231,6 @@ function NetdiskSection({
 
   const [pushAllOpen, setPushAllOpen] = useState(false);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
-  const [deleteFileTarget, setDeleteFileTarget] = useState<{
-    id: string;
-    filename: string;
-  } | null>(null);
 
   return (
     <Card>
@@ -407,42 +382,6 @@ function NetdiskSection({
                 ))}
               </div>
             )}
-
-            {status.pendingDeletes.length > 0 && (
-              <div className="space-y-2 rounded-lg border border-amber-900/50 p-3">
-                <p className="text-sm text-amber-400">
-                  待确认删除（站内已删，网盘副本待处理）：
-                </p>
-                {status.pendingDeletes.map((item) => (
-                  <div
-                    className="flex flex-wrap items-center gap-2 text-sm text-neutral-400"
-                    key={item.id}
-                  >
-                    <span className="flex-1 truncate">
-                      {item.filename}（{item.albumTitle}）
-                    </span>
-                    <Button
-                      disabled={confirmDeleteMutation.isPending}
-                      onClick={() => setDeleteFileTarget(item)}
-                      size="sm"
-                      type="button"
-                      variant="destructive"
-                    >
-                      删除网盘文件
-                    </Button>
-                    <Button
-                      disabled={dismissDeleteMutation.isPending}
-                      onClick={() => dismissDeleteMutation.mutate(item.id)}
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                    >
-                      保留
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
       </CardContent>
@@ -463,21 +402,103 @@ function NetdiskSection({
         open={disconnectOpen}
         title="断开网盘连接"
       />
-      {deleteFileTarget !== null && (
-        <ConfirmDialog
-          danger
-          confirmText="删除"
-          description={`删除网盘文件 ${deleteFileTarget.filename}？不可恢复。`}
-          onConfirm={() =>
-            confirmDeleteMutation.mutateAsync(deleteFileTarget.id)
-          }
-          onOpenChange={(open) => {
-            if (!open) setDeleteFileTarget(null);
-          }}
-          open
-          title="删除网盘文件"
-        />
-      )}
+    </Card>
+  );
+}
+
+/**
+ * 网盘归档（托管）卡片（JIANGLIUER-102，扩展 ADR 0004 可见性）：
+ * 站内删除的照片网盘文件 + 直接上传的托管文件统一在此登记展示；
+ * 解除托管后下轮扫描按目录重新导入 = 恢复。
+ */
+function NetdiskArchiveSection() {
+  const queryClient = useQueryClient();
+  const queryKey = ["netdisk-managed"];
+
+  const managedQuery = useQuery({
+    queryKey,
+    queryFn: () => apiFetch<NetdiskManagedFiles>("/admin/netdisk/managed"),
+  });
+
+  const unmanageMutation = useMutation({
+    mutationFn: (paths: string[]) =>
+      apiFetch<{ removed: number }>("/admin/netdisk/managed/unmanage", {
+        method: "POST",
+        body: JSON.stringify({ paths }),
+      }),
+    onSuccess: ({ removed }) => {
+      toast.success(`已解除 ${removed} 条托管登记，下次扫描将按目录重新导入`);
+      queryClient.invalidateQueries({ queryKey });
+      queryClient.invalidateQueries({ queryKey: ["netdisk-status"] });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const [unmanageTarget, setUnmanageTarget] = useState<string | null>(null);
+
+  const entries = managedQuery.data?.entries ?? [];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-1.5">
+          <Archive size={15} />
+          网盘归档（托管）
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {managedQuery.isPending ? (
+          <p className="text-sm text-neutral-500">加载中…</p>
+        ) : entries.length === 0 ? (
+          <p className="text-sm text-neutral-500">
+            暂无归档。删除专辑/照片后，其网盘文件会保留并登记在这里。
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-sm text-neutral-400">
+              {entries.length}{" "}
+              个文件登记托管：站内已下架，网盘文件保留（扫描跳过）。
+            </p>
+            <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-lg border border-neutral-800 p-3">
+              {entries.map((entry) => (
+                <div
+                  className="flex flex-wrap items-center gap-2 text-sm text-neutral-400"
+                  key={entry.fsId}
+                >
+                  <span className="flex-1 truncate font-mono text-xs">
+                    {entry.path}
+                  </span>
+                  <span className="text-xs text-neutral-500">
+                    {new Date(entry.uploadedAt).toLocaleString()}
+                  </span>
+                  <Button
+                    disabled={unmanageMutation.isPending}
+                    onClick={() => setUnmanageTarget(entry.path)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    解除托管
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {unmanageTarget !== null && (
+          <ConfirmDialog
+            confirmText="解除托管"
+            description={`解除后下次扫描会把该网盘文件按所在目录重新导入为照片（专辑以「仅链接」形态重建）。确定解除 ${unmanageTarget} 的托管？`}
+            onConfirm={() => unmanageMutation.mutateAsync([unmanageTarget])}
+            onOpenChange={(open) => {
+              if (!open) setUnmanageTarget(null);
+            }}
+            open
+            title="解除托管（恢复导入）"
+          />
+        )}
+      </CardContent>
     </Card>
   );
 }

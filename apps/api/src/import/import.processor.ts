@@ -4,6 +4,10 @@ import type { ImportItemStatus } from "@photo/shared";
 import type { Job } from "bullmq";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { BaiduDownloadService } from "../baidu/baidu-download.service.js";
+import {
+  isForeignKeyViolation,
+  isMissingRecordError,
+} from "../common/prisma-errors.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PhotoService } from "../photo/photo.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
@@ -39,15 +43,29 @@ export class ImportProcessor extends WorkerHost {
       return;
     }
 
-    // 上次运行中断（进程被杀/Redis 重启）的条目重置后继续
+    // 上次运行中断（进程被杀/Redis 重启）的条目重置后继续。
+    // 任务被级联删（专辑在排队期间被下架）→ 置 RUNNING 撞 P2025：记日志跳过。
     await this.prisma.importItem.updateMany({
       where: { jobId: dbJob.id, status: { in: IN_FLIGHT_STATUSES } },
       data: { status: "PENDING", error: null },
     });
-    await this.prisma.importJob.update({
-      where: { id: dbJob.id },
-      data: { status: "RUNNING", error: null },
-    });
+    const resumed = await this.prisma.importJob
+      .update({
+        where: { id: dbJob.id },
+        data: { status: "RUNNING", error: null },
+      })
+      .catch((error: unknown) => {
+        if (!isMissingRecordError(error)) {
+          throw error;
+        }
+        return null;
+      });
+    if (resumed === null) {
+      this.logger.warn(
+        `导入任务已被删除（专辑下架级联），跳过（${job.data.importJobId}）`,
+      );
+      return;
+    }
 
     for (const item of dbJob.items.filter(
       (entry) => entry.status === "PENDING",
@@ -101,16 +119,33 @@ export class ImportProcessor extends WorkerHost {
         data: { status: "SUCCEEDED", photoId: photo.id },
       });
     } catch (error) {
+      // 专辑在导入进行中被删（JIANGLIUER-102）：任务与条目已级联删除，
+      // 照片行也建不进去（P2003 外键）——下载产物不入库，记日志跳过，
+      // 不再回写状态、不让任务报错重试
+      if (isMissingRecordError(error) || isForeignKeyViolation(error)) {
+        this.logger.warn(
+          `导入条目中止（专辑/任务已被删除，级联清理）：fsId=${fsId}`,
+        );
+        return;
+      }
       const skipped = error instanceof ConflictException;
       const message =
         error instanceof Error ? error.message : "未知错误（导入失败）";
-      await this.prisma.importItem.update({
-        where: { id: itemId },
-        data: {
-          status: skipped ? "SKIPPED" : "FAILED",
-          error: skipped ? "相同内容的照片已存在，自动跳过" : message,
-        },
-      });
+      await this.prisma.importItem
+        .update({
+          where: { id: itemId },
+          data: {
+            status: skipped ? "SKIPPED" : "FAILED",
+            error: skipped ? "相同内容的照片已存在，自动跳过" : message,
+          },
+        })
+        .catch((updateError: unknown) => {
+          // 条目恰在此间被级联删：状态无处可写，记日志跳过
+          if (!isMissingRecordError(updateError)) {
+            throw updateError;
+          }
+          this.logger.warn(`导入条目已被删除，跳过状态回写（${itemId}）`);
+        });
       if (!skipped) {
         this.logger.warn(`导入条目失败（${itemId}）: ${message}`);
       }
@@ -119,7 +154,7 @@ export class ImportProcessor extends WorkerHost {
     }
   }
 
-  /** 条目计数实时写回 job，进度横幅轮询 DB 即可。 */
+  /** 条目计数实时写回 job，进度横幅轮询 DB 即可；任务被级联删时静默跳过。 */
   private async refreshJobCounters(jobId: string): Promise<void> {
     const counts = await this.prisma.importItem.groupBy({
       by: ["status"],
@@ -128,14 +163,21 @@ export class ImportProcessor extends WorkerHost {
     });
     const byStatus = (status: string) =>
       counts.find((entry) => entry.status === status)?._count.status ?? 0;
-    await this.prisma.importJob.update({
-      where: { id: jobId },
-      data: {
-        completed: byStatus("SUCCEEDED"),
-        failed: byStatus("FAILED"),
-        skipped: byStatus("SKIPPED"),
-      },
-    });
+    await this.prisma.importJob
+      .update({
+        where: { id: jobId },
+        data: {
+          completed: byStatus("SUCCEEDED"),
+          failed: byStatus("FAILED"),
+          skipped: byStatus("SKIPPED"),
+        },
+      })
+      .catch((error: unknown) => {
+        if (!isMissingRecordError(error)) {
+          throw error;
+        }
+        this.logger.warn(`导入任务已被删除，跳过计数回写（${jobId}）`);
+      });
   }
 
   /** 按条目派生终态：全成 SUCCEEDED / 全败 FAILED / 混合 PARTIAL。 */
@@ -159,9 +201,16 @@ export class ImportProcessor extends WorkerHost {
     }
     const status =
       failed === 0 ? "SUCCEEDED" : failed === total ? "FAILED" : "PARTIAL";
-    await this.prisma.importJob.update({
-      where: { id: jobId },
-      data: { status },
-    });
+    await this.prisma.importJob
+      .update({
+        where: { id: jobId },
+        data: { status },
+      })
+      .catch((error: unknown) => {
+        if (!isMissingRecordError(error)) {
+          throw error;
+        }
+        this.logger.warn(`导入任务已被删除，跳过终态回写（${jobId}）`);
+      });
   }
 }

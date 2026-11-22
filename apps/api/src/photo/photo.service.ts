@@ -276,28 +276,24 @@ export class PhotoService {
         renditions: { select: { key: true } },
         netdiskFsId: true,
         netdiskPath: true,
-        album: { select: { title: true } },
       },
     });
     if (!photo) {
       throw new NotFoundException("照片不存在");
+    }
+    // 已镜像照片：网盘文件不删，先登记托管归档再删行（登记失败即报错，
+    // 照片未动可重试；JIANGLIUER-102，站内删除不碰网盘）
+    if (photo.netdiskFsId && photo.netdiskPath) {
+      await this.netdisk.addManagedEntry({
+        fsId: photo.netdiskFsId,
+        path: photo.netdiskPath,
+      });
     }
     await this.prisma.photo.delete({ where: { id } });
     await this.storage.deleteMany([
       photo.originalKey,
       ...photo.renditions.map((rendition) => rendition.key),
     ]);
-    // 已镜像的照片 → 网盘删除待人工确认（不自动传播，ADR 0002）
-    if (photo.netdiskFsId) {
-      await this.netdisk.markPendingDeletes([
-        {
-          netdiskFsId: photo.netdiskFsId,
-          netdiskPath: photo.netdiskPath,
-          fallbackFilename: photo.originalKey.split("/").pop() ?? id,
-          albumTitle: photo.album.title,
-        },
-      ]);
-    }
   }
 
   /** 批量移动 = 换专辑（一张照片只属于一个专辑）；已镜像照片跟随网盘移动。 */
@@ -335,9 +331,19 @@ export class PhotoService {
         renditions: { select: { key: true } },
         netdiskFsId: true,
         netdiskPath: true,
-        album: { select: { title: true } },
       },
     });
+    // 已镜像照片：网盘文件不删，先登记托管归档再删行（登记失败即报错，
+    // 照片未动可重试；JIANGLIUER-102，站内删除不碰网盘）
+    const mirrored = photos.filter(
+      (photo) => photo.netdiskFsId && photo.netdiskPath,
+    );
+    for (const photo of mirrored) {
+      await this.netdisk.addManagedEntry({
+        fsId: photo.netdiskFsId ?? "",
+        path: photo.netdiskPath ?? "",
+      });
+    }
     const result = await this.prisma.photo.deleteMany({
       where: { id: { in: photoIds } },
     });
@@ -346,16 +352,6 @@ export class PhotoService {
         photo.originalKey,
         ...photo.renditions.map((rendition) => rendition.key),
       ]),
-    );
-    await this.netdisk.markPendingDeletes(
-      photos
-        .filter((photo) => photo.netdiskFsId)
-        .map((photo) => ({
-          netdiskFsId: photo.netdiskFsId ?? "",
-          netdiskPath: photo.netdiskPath,
-          fallbackFilename: photo.originalKey.split("/").pop() ?? "",
-          albumTitle: photo.album.title,
-        })),
     );
     return result.count;
   }

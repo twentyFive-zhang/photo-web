@@ -166,9 +166,9 @@ M2 认证 + 内容 CRUD、M3 上传 + 展示纵向切片、M4 后台完整 + 前
 - **存量回填**：设置页「全量推送」把所有未同步照片入队；进度用 syncedCount/totalPhotos 实时算
 - **下行扫描**：每日 00:30 repeatable（启动时 upsertJobScheduler 注册，执行时检查 `SiteSetting.netdiskDailyScan` 开关）+ 手动「立即检查」；遍历 `/apps/{应用名}/` 全树，fsid 对比 `Photo.netdiskFsId`：新文件夹自动建专辑（仅链接可见）并分批（≤500/任务）走 import 队列自动导入（成功回写 fsid）；网盘侧缺失仅写报告（`SiteSetting.netdiskScanReport`），站内永不动
 - **改名/移动传播**：专辑重命名 → filemanager rename 目录；照片换专辑 → filemanager move（均异步可重试，目录不存在视为跳过）
-- **删除不自动传播**：站内删除（单张/批量/删专辑）→ 已镜像照片写 `NetdiskPendingDelete`（幂等）；设置页「待确认删除」列表确认后 filemanager delete（-9 视为已达成）或保留
+- **删除不自动传播（2026-11-22 起为「登记托管归档」，JIANGLIUER-102）**：站内删除（单张/批量/删专辑）不碰网盘——已镜像照片的网盘文件登记进 `SiteSetting.netdiskManagedFiles`（扫描跳过，防复活），设置页「网盘归档（托管）」卡片可解除托管；解除后下轮扫描按目录重导 = 恢复。原 `NetdiskPendingDelete` 待确认删除机制已退役
 - **应用目录**：`BAIDU_APP_NAME`（可选 env）指定 `/apps/{应用名}`；部分账号不能列 `/apps` 虚拟根（errno -9），配置后浏览根/扫描根直接定位应用目录
-- **后台 UI**：设置页「百度网盘镜像同步」卡片（连接状态、开关、立即检查、全量推送、扫描报告、待确认删除）
+- **后台 UI**：设置页「百度网盘镜像同步」卡片（连接状态、开关、立即检查、全量推送、扫描报告）+「网盘归档（托管）」卡片（托管登记清单、解除托管）
 - 已验证（2026-10-29，真实网盘端到端）：扫描报告 DONE（resolveAppDir 定位应用目录成功）；上传照片 2s 内自动推送、网盘可见（fsid/path 回写）；专辑改名 → 网盘目录重命名；照片换专辑 → filemanager move 传播；删除 → 待确认 → 确认后网盘文件消失；遗留探针文件已清理
 - 调试中确认的百度接口契约（均已固化进 `BaiduApiService`）：xpan/file 的 POST 接口（precreate/create/filemanager）query 只放 method+access_token（filemanager 另加 opera），其余参数放 form body，须整体 URL 编码（原样 JSON 报 errno 2）；precreate 必带 autoinit=1；locateupload 需 access_token/path/uploadid/upload_version=2.0，响应字段是 error_code 而非 errno；superfile2 成功响应无 errno（只有 md5），失败用 error_code；filemanager delete 的 filelist 是纯路径字符串数组，move 的 dest 放在条目内，rename 用 async=1 同步取逐文件结果（info[].errno=-9 = 目录从未推送过）
 
