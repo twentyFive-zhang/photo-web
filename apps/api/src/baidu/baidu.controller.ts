@@ -24,9 +24,7 @@ import { BaiduApiError, BaiduApiService } from "./baidu-api.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { BaiduCredentialService } from "./baidu-credential.service.js";
 import { toBaiduDirectoryListing } from "./baidu-mapper.js";
-
-/** 2026-06-03 后创建的应用，文件接口只能访问 /apps/{应用名}/。 */
-const BROWSE_ROOT = "/apps";
+import { baiduRootOf } from "./baidu-paths.js";
 
 @Controller("admin/baidu")
 @UseGuards(AdminGuard)
@@ -39,8 +37,7 @@ export class BaiduController {
 
   /** 浏览根：配置了 BAIDU_APP_NAME 时直接定位应用目录（/apps 虚拟根部分账号不可列）。 */
   private get browseRoot(): string {
-    const appName = this.config.get("BAIDU_APP_NAME", { infer: true });
-    return appName ? `${BROWSE_ROOT}/${appName}` : BROWSE_ROOT;
+    return baiduRootOf(this.config.get("BAIDU_APP_NAME", { infer: true }));
   }
 
   @Get("status")
@@ -113,10 +110,10 @@ export class BaiduController {
   /** 归一化浏览目录：空 → 浏览根；越出 /apps 一律拒到边界。 */
   private normalizeDir(raw?: string): string {
     const dir = raw?.trim();
-    if (!dir || dir === "/" || dir === BROWSE_ROOT) {
+    if (!dir || dir === "/" || dir === this.browseRoot) {
       return this.browseRoot;
     }
-    if (!dir.startsWith(`${BROWSE_ROOT}/`)) {
+    if (!dir.startsWith(`${this.browseRoot}/`)) {
       throw new BadRequestException("只能浏览 /apps/ 目录下的文件");
     }
     return dir.replace(/\/+$/, "") || this.browseRoot;
