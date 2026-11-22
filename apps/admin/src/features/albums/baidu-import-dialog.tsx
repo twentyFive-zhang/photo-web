@@ -34,16 +34,15 @@ export const baiduStatusQuery = {
 };
 
 /**
- * 从百度网盘导入弹窗：连接状态 → 目录浏览（面包屑 + 分页）→
- * 勾选文件/文件夹 → 创建导入任务（文件夹由服务端展开）。
+ * 从百度网盘导入弹窗（ADR 0006 收编两段式第一步）：连接状态 → 目录浏览
+ * （面包屑 + 分页）→ 勾选文件/文件夹 → 创建导入任务（文件夹由服务端展开）。
+ * 导入只把文件登记为照片（fsid 索引 + 生成变体），不进任何专辑。
  */
 export function BaiduImportDialog({
-  albumId,
   open,
   onOpenChange,
   onImported,
 }: {
-  albumId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImported: () => void;
@@ -64,11 +63,7 @@ export function BaiduImportDialog({
           <p className="text-sm text-neutral-400">加载中…</p>
         )}
         {statusQuery.data && (
-          <ImportBody
-            albumId={albumId}
-            onImported={onImported}
-            status={statusQuery.data}
-          />
+          <ImportBody onImported={onImported} status={statusQuery.data} />
         )}
       </DialogContent>
     </Dialog>
@@ -76,11 +71,9 @@ export function BaiduImportDialog({
 }
 
 function ImportBody({
-  albumId,
   status,
   onImported,
 }: {
-  albumId: string;
   status: BaiduConnectionStatus;
   onImported: () => void;
 }) {
@@ -118,16 +111,10 @@ function ImportBody({
     );
   }
 
-  return <BaiduBrowser albumId={albumId} onImported={onImported} />;
+  return <BaiduBrowser onImported={onImported} />;
 }
 
-function BaiduBrowser({
-  albumId,
-  onImported,
-}: {
-  albumId: string;
-  onImported: () => void;
-}) {
+function BaiduBrowser({ onImported }: { onImported: () => void }) {
   const [dir, setDir] = useState(BROWSE_ROOT);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Map<number, BaiduFileEntry>>(
@@ -150,7 +137,7 @@ function BaiduBrowser({
         body: JSON.stringify(input),
       }),
     onSuccess: () => {
-      toast.success("导入任务已创建，完成后照片会出现在专辑中");
+      toast.success("导入任务已创建，完成后照片进入照片库（不自动进专辑）");
       onImported();
     },
     onError: (err: Error) => {
@@ -184,7 +171,6 @@ function BaiduBrowser({
   function startImport() {
     setError(null);
     importMutation.mutate({
-      albumId,
       entries: [...selected.values()].map((entry) => ({
         fsId: entry.fsId,
         path: entry.path,
@@ -201,6 +187,7 @@ function BaiduBrowser({
         照片需位于网盘「我的应用数据」目录（即{" "}
         <code className="text-neutral-300">/apps/</code> 开头）。
         可勾选文件或整个文件夹，文件夹会被完整导入（仅图片，≤500 张/次）。
+        导入只登记为照片（不进专辑），之后在专辑编辑页「添加照片」挑图。
       </p>
 
       <Breadcrumb dir={dir} onNavigate={navigate} />

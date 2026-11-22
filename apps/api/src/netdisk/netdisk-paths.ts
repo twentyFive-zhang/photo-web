@@ -1,15 +1,16 @@
-// sanitize 规则 admin 端做目录↔专辑对照也要用，单一实现在 shared
-import { sanitizeNetdiskName } from "@photo/shared";
+/**
+ * ADR 0006 后目录名与专辑标题彻底解耦：推送母版统一落
+ * /apps/{应用名}/library/{publicId}.{ext}，不再需要标题→目录名的派生。
+ * shared 里的 sanitizeNetdiskName 仅服务于网盘直接管理通道（JIANGLIUER-94
+ * 新建文件夹/直接上传的文件名清洗），与本模块无关。
+ */
+export const NETDISK_LIBRARY_DIR = "library";
 
-export { sanitizeNetdiskName };
-
-/** 镜像文件名：标题（无则 publicId）- publicId.扩展名，publicId 后缀保证唯一。 */
-export function netdiskFilename(input: {
-  title: string | null;
+/** 推送母版落点文件名：{publicId}.{ext}（ext 从 originalKey 推导）。 */
+export function netdiskLibraryFilename(input: {
   publicId: string;
   originalKey: string;
 }): string {
   const ext = input.originalKey.split(".").pop() ?? "bin";
-  const base = sanitizeNetdiskName(input.title || input.publicId);
-  return `${base}-${input.publicId}.${ext}`;
+  return `${input.publicId}.${ext}`;
 }

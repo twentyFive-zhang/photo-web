@@ -91,7 +91,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   );
 }
 
-/** GET /admin/albums/:id/photos 的行结构。 */
+/** GET /admin/albums/:id/photos 的行结构（成员照片行，sortOrder 为专辑内顺序）。 */
 export interface AlbumPhotoRow {
   id: string;
   publicId: string;
@@ -108,6 +108,7 @@ export interface AlbumPhotoRow {
     width: number;
     height: number;
   }[];
+  sortOrder: number;
 }
 
 export function useInvalidateAlbum(albumId: string) {

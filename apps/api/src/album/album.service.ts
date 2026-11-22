@@ -1,18 +1,19 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import type {
+  AddAlbumPhotosInput,
   Album,
+  AlbumPhoto,
   CreateAlbumInput,
   PhotoSummary,
   PublicAlbum,
   PublicAlbumSummary,
   PublicPhoto,
+  RemoveAlbumPhotosInput,
   ReorderPhotosInput,
   UpdateAlbumInput,
 } from "@photo/shared";
 import { Prisma } from "@prisma/client";
 import { generatePublicId, generateShareToken } from "../common/id.js";
-// biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
-import { NetdiskSyncService } from "../netdisk/netdisk-sync.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PrismaService } from "../prisma/prisma.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
@@ -24,17 +25,18 @@ const isUniqueViolation = (
   error instanceof Prisma.PrismaClientKnownRequestError &&
   error.code === "P2002";
 
+/** 生效封面回落来源：成员排序第一张（带 THUMB rendition 供列表缩略图）。 */
 const albumInclude = {
   coverPhoto: {
     include: { renditions: { where: { variant: "THUMB" as const } } },
   },
-  photos: {
-    // 生效封面的回落来源：排序第一张照片
+  members: {
+    // 封面回落：成员排序第一张
     take: 1,
     orderBy: { sortOrder: "asc" as const },
-    select: { id: true, publicId: true, title: true },
+    select: { photo: { select: { id: true, publicId: true, title: true } } },
   },
-  _count: { select: { photos: true } },
+  _count: { select: { members: true } },
 } satisfies Prisma.AlbumInclude;
 
 type AlbumWithCover = Prisma.AlbumGetPayload<{
@@ -49,12 +51,12 @@ function toPhotoSummary(photo: {
   return { id: photo.id, publicId: photo.publicId, title: photo.title };
 }
 
-/** 生效封面：手动 coverPhotoId 优先，否则排序第一张，空专辑为 null。 */
+/** 生效封面：手动 coverPhotoId 优先，否则成员排序第一张，空专辑为 null。 */
 function resolveCover(album: AlbumWithCover): PhotoSummary | null {
   if (album.coverPhoto) {
     return toPhotoSummary(album.coverPhoto);
   }
-  return album.photos[0] ? toPhotoSummary(album.photos[0]) : null;
+  return album.members[0] ? toPhotoSummary(album.members[0].photo) : null;
 }
 
 function toAlbum(album: AlbumWithCover): Album {
@@ -68,10 +70,24 @@ function toAlbum(album: AlbumWithCover): Album {
     cover: resolveCover(album),
     visibility: album.visibility,
     publishedAt: album.publishedAt?.toISOString() ?? null,
-    photoCount: album._count.photos,
+    photoCount: album._count.members,
     createdAt: album.createdAt.toISOString(),
     updatedAt: album.updatedAt.toISOString(),
   };
+}
+
+async function requireAlbum(
+  prisma: PrismaService,
+  albumId: string,
+): Promise<{ id: string; publishedAt: Date | null }> {
+  const album = await prisma.album.findUnique({
+    where: { id: albumId },
+    select: { id: true, publishedAt: true },
+  });
+  if (!album) {
+    throw new NotFoundException("专辑不存在");
+  }
+  return album;
 }
 
 @Injectable()
@@ -79,7 +95,6 @@ export class AlbumService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
-    private readonly netdisk: NetdiskSyncService,
   ) {}
 
   async list(): Promise<Album[]> {
@@ -124,18 +139,21 @@ export class AlbumService {
     throw new Error("unreachable");
   }
 
+  /**
+   * 更新专辑元数据（ADR 0006：改名是纯站内操作，零网盘 API 调用）。
+   * coverPhotoId 必须指向本专辑成员照片（封面仍是 Album 字段）。
+   */
   async update(id: string, input: UpdateAlbumInput): Promise<Album> {
-    const existing = await this.prisma.album.findUnique({ where: { id } });
-    if (!existing) {
-      throw new NotFoundException("专辑不存在");
-    }
+    const existing = await requireAlbum(this.prisma, id);
 
     if (input.coverPhotoId) {
-      const photo = await this.prisma.photo.findUnique({
-        where: { id: input.coverPhotoId },
-        select: { albumId: true },
+      const member = await this.prisma.albumPhoto.findUnique({
+        where: {
+          albumId_photoId: { albumId: id, photoId: input.coverPhotoId },
+        },
+        select: { photoId: true },
       });
-      if (!photo || photo.albumId !== id) {
+      if (!member) {
         throw new NotFoundException("封面照片不存在或不属于该专辑");
       }
     }
@@ -160,52 +178,17 @@ export class AlbumService {
       },
       include: albumInclude,
     });
-    // 标题变更 → 网盘镜像目录跟随重命名（异步，失败可重试）
-    if (input.title !== undefined && input.title !== existing.title) {
-      await this.netdisk.enqueueRenameAlbum({
-        albumId: id,
-        oldTitle: existing.title,
-        newTitle: input.title,
-      });
-    }
     return toAlbum(album);
   }
 
+  /**
+   * 删除专辑 = 仅站内下架：删专辑行（成员关系级联），照片保留在照片库，
+   * 网盘侧零调用（ADR 0006 解耦 + 删除不碰网盘不变量）。
+   */
   async remove(id: string): Promise<void> {
-    // 级联删除在 DB 层完成；存储文件需先收集、删库后清理
-    const photos = await this.prisma.photo.findMany({
-      where: { albumId: id },
-      select: {
-        id: true,
-        originalKey: true,
-        renditions: { select: { key: true } },
-        netdiskFsId: true,
-        netdiskPath: true,
-      },
-    });
-    // 竞态第一道闸：清掉排队中的上行推送任务（照片已删，推上去是孤儿文件）
-    await this.netdisk.removeQueuedPushJobs(photos.map((photo) => photo.id));
-    // 已镜像照片的网盘文件不删，先登记托管归档再删库（登记失败即报错，
-    // 专辑未动管理员可直接重试；先登记保证文件始终处于扫描隔离下，
-    // JIANGLIUER-102：站内删除不碰网盘，ADR 0005 注记）
-    const mirrored = photos.filter(
-      (photo) => photo.netdiskFsId && photo.netdiskPath,
-    );
-    for (const photo of mirrored) {
-      await this.netdisk.addManagedEntry({
-        fsId: photo.netdiskFsId ?? "",
-        path: photo.netdiskPath ?? "",
-      });
-    }
     await this.prisma.album.delete({ where: { id } }).catch(() => {
       throw new NotFoundException("专辑不存在");
     });
-    await this.storage.deleteMany(
-      photos.flatMap((photo) => [
-        photo.originalKey,
-        ...photo.renditions.map((rendition) => rendition.key),
-      ]),
-    );
   }
 
   /** 轮换 shareToken：旧链接立即失效。 */
@@ -233,77 +216,115 @@ export class AlbumService {
     throw new Error("unreachable");
   }
 
+  /** 专辑成员照片：按成员关系 sortOrder 输出（形状同 shared AlbumPhoto）。 */
   async getPhotos(albumId: string) {
-    const album = await this.prisma.album.findUnique({
-      where: { id: albumId },
-      select: { id: true },
-    });
-    if (!album) {
-      throw new NotFoundException("专辑不存在");
-    }
+    await requireAlbum(this.prisma, albumId);
 
-    const photos = await this.prisma.photo.findMany({
+    const members = await this.prisma.albumPhoto.findMany({
       where: { albumId },
       orderBy: { sortOrder: "asc" },
       include: {
-        renditions: true,
-        tags: { include: { tag: true } },
+        photo: {
+          include: {
+            renditions: true,
+            tags: { include: { tag: true } },
+            memberships: {
+              orderBy: { createdAt: "asc" as const },
+              include: {
+                album: { select: { id: true, publicId: true, title: true } },
+              },
+            },
+          },
+        },
       },
     });
 
-    return photos.map((photo) => ({
+    return members.map(({ photo, sortOrder }) => ({
       id: photo.id,
       publicId: photo.publicId,
+      albums: photo.memberships.map(({ album }) => album),
       title: photo.title,
       caption: photo.caption,
-      sortOrder: photo.sortOrder,
+      originalKey: photo.originalKey,
+      sha256: photo.sha256,
       width: photo.width,
       height: photo.height,
-      exif: photo.exif,
+      exif: (photo.exif as AlbumPhoto["exif"]) ?? null,
+      renditions: photo.renditions,
       tags: photo.tags.map((photoTag) => ({
         id: photoTag.tag.id,
         name: photoTag.tag.name,
       })),
-      renditions: photo.renditions,
+      sortOrder,
       createdAt: photo.createdAt.toISOString(),
       updatedAt: photo.updatedAt.toISOString(),
     }));
   }
 
-  /** 按传入顺序重写专辑内照片的 sortOrder（要求传入该专辑的全部照片 id）。 */
+  /** 加入成员（追加到专辑末尾）；已是成员的照片自动忽略。 */
+  async addPhotos(albumId: string, input: AddAlbumPhotosInput): Promise<void> {
+    await requireAlbum(this.prisma, albumId);
+
+    const existingPhotos = await this.prisma.photo.findMany({
+      where: { id: { in: input.photoIds } },
+      select: { id: true },
+    });
+    if (existingPhotos.length !== input.photoIds.length) {
+      throw new NotFoundException("存在不存在的照片");
+    }
+
+    const maxRow = await this.prisma.albumPhoto.aggregate({
+      where: { albumId },
+      _max: { sortOrder: true },
+    });
+    let next = (maxRow._max.sortOrder ?? -1) + 1;
+
+    await this.prisma.$transaction(
+      input.photoIds.map((photoId) =>
+        this.prisma.albumPhoto.upsert({
+          where: { albumId_photoId: { albumId, photoId } },
+          update: {},
+          create: { albumId, photoId, sortOrder: next++ },
+        }),
+      ),
+    );
+  }
+
+  /** 移出成员：只拆成员关系，照片本身保留在照片库。 */
+  async removePhotos(
+    albumId: string,
+    input: RemoveAlbumPhotosInput,
+  ): Promise<void> {
+    await requireAlbum(this.prisma, albumId);
+    await this.prisma.albumPhoto.deleteMany({
+      where: { albumId, photoId: { in: input.photoIds } },
+    });
+  }
+
+  /** 按传入顺序重写成员关系 sortOrder（要求传入该专辑全部成员照片 id）。 */
   async reorderPhotos(
     albumId: string,
     input: ReorderPhotosInput,
   ): Promise<void> {
-    const album = await this.prisma.album.findUnique({
-      where: { id: albumId },
-      select: { id: true },
-    });
-    if (!album) {
-      throw new NotFoundException("专辑不存在");
-    }
+    await requireAlbum(this.prisma, albumId);
 
     const uniqueIds = [...new Set(input.photoIds)];
     if (uniqueIds.length !== input.photoIds.length) {
       throw new NotFoundException("photoIds 存在重复");
     }
 
-    const photos = await this.prisma.photo.findMany({
-      where: { id: { in: input.photoIds } },
-      select: { id: true, albumId: true },
+    const members = await this.prisma.albumPhoto.findMany({
+      where: { albumId, photoId: { in: input.photoIds } },
+      select: { photoId: true },
     });
-
-    if (photos.length !== input.photoIds.length) {
-      throw new NotFoundException("存在不存在的照片");
-    }
-    if (photos.some((photo) => photo.albumId !== albumId)) {
+    if (members.length !== input.photoIds.length) {
       throw new NotFoundException("存在不属于该专辑的照片");
     }
 
     await this.prisma.$transaction(
       input.photoIds.map((photoId, index) =>
-        this.prisma.photo.update({
-          where: { id: photoId },
+        this.prisma.albumPhoto.update({
+          where: { albumId_photoId: { albumId, photoId } },
           data: { sortOrder: index },
         }),
       ),
@@ -328,13 +349,17 @@ export class AlbumService {
         coverPhoto: {
           include: { renditions: { where: { variant: "THUMB" as const } } },
         },
-        photos: {
-          // 封面回落：排序第一张
+        members: {
+          // 封面回落：成员排序第一张
           take: 1,
           orderBy: { sortOrder: "asc" as const },
-          include: { renditions: { where: { variant: "THUMB" as const } } },
+          include: {
+            photo: {
+              include: { renditions: { where: { variant: "THUMB" as const } } },
+            },
+          },
         },
-        _count: { select: { photos: true } },
+        _count: { select: { members: true } },
       },
     });
 
@@ -342,12 +367,12 @@ export class AlbumService {
       publicId: album.publicId,
       title: album.title,
       description: album.description,
-      photoCount: album._count.photos,
+      photoCount: album._count.members,
       publishedAt: album.publishedAt?.toISOString() ?? null,
       coverUrl: album.coverPhoto
         ? this.thumbUrlOf(album.coverPhoto)
-        : album.photos[0]
-          ? this.thumbUrlOf(album.photos[0])
+        : album.members[0]
+          ? this.thumbUrlOf(album.members[0].photo)
           : null,
     }));
   }
@@ -356,15 +381,7 @@ export class AlbumService {
   async getPublic(publicId: string): Promise<PublicAlbum> {
     const album = await this.prisma.album.findUnique({
       where: { publicId },
-      include: {
-        photos: {
-          orderBy: { sortOrder: "asc" },
-          include: {
-            renditions: true,
-            tags: { include: { tag: true } },
-          },
-        },
-      },
+      include: this.publicMembersInclude(),
     });
     if (!album) {
       throw new NotFoundException("专辑不存在");
@@ -376,15 +393,7 @@ export class AlbumService {
   async getPublicByShareToken(shareToken: string): Promise<PublicAlbum> {
     const album = await this.prisma.album.findUnique({
       where: { shareToken },
-      include: {
-        photos: {
-          orderBy: { sortOrder: "asc" },
-          include: {
-            renditions: true,
-            tags: { include: { tag: true } },
-          },
-        },
-      },
+      include: this.publicMembersInclude(),
     });
     if (!album) {
       throw new NotFoundException("专辑不存在或链接已失效");
@@ -392,38 +401,56 @@ export class AlbumService {
     return this.toPublicAlbum(album);
   }
 
+  private publicMembersInclude() {
+    return {
+      members: {
+        orderBy: { sortOrder: "asc" as const },
+        include: {
+          photo: {
+            include: {
+              renditions: true,
+              tags: { include: { tag: true } },
+            },
+          },
+        },
+      },
+    } satisfies Prisma.AlbumInclude;
+  }
+
   private toPublicAlbum(album: {
     publicId: string;
     title: string;
     description: string | null;
     publishedAt: Date | null;
-    photos: {
-      publicId: string;
-      title: string | null;
-      caption: string | null;
-      width: number;
-      height: number;
-      exif: unknown;
+    members: {
       sortOrder: number;
-      renditions: {
-        variant: "THUMB" | "DISPLAY";
-        format: "WEBP" | "JPEG";
+      photo: {
+        publicId: string;
+        title: string | null;
+        caption: string | null;
         width: number;
         height: number;
-        bytes: number;
-        key: string;
-      }[];
-      tags: { tag: { id: string; name: string } }[];
+        exif: unknown;
+        renditions: {
+          variant: "THUMB" | "DISPLAY";
+          format: "WEBP" | "JPEG";
+          width: number;
+          height: number;
+          bytes: number;
+          key: string;
+        }[];
+        tags: { tag: { id: string; name: string } }[];
+      };
     }[];
   }): PublicAlbum {
-    const photos: PublicPhoto[] = album.photos.map((photo) => ({
+    const photos: PublicPhoto[] = album.members.map(({ photo, sortOrder }) => ({
       publicId: photo.publicId,
       title: photo.title,
       caption: photo.caption,
       width: photo.width,
       height: photo.height,
       exif: (photo.exif as PublicPhoto["exif"]) ?? null,
-      sortOrder: photo.sortOrder,
+      sortOrder,
       renditions: photo.renditions.map((rendition) => ({
         variant: rendition.variant,
         format: rendition.format,

@@ -1,47 +1,36 @@
 import { unlink } from "node:fs/promises";
-import {
-  InjectQueue,
-  OnWorkerEvent,
-  Processor,
-  WorkerHost,
-} from "@nestjs/bullmq";
+import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
-import type { NetdiskMasterLostPhoto } from "@photo/shared";
-import type { Job, Queue } from "bullmq";
+import type { NetdiskMasterLostPhoto, NetdiskPendingFile } from "@photo/shared";
+import type { Job } from "bullmq";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
-import { BaiduApiError, BaiduApiService } from "../baidu/baidu-api.service.js";
+import { BaiduApiService } from "../baidu/baidu-api.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { BaiduCredentialService } from "../baidu/baidu-credential.service.js";
-import { generatePublicId, generateShareToken } from "../common/id.js";
-import {
-  isImportableImage,
-  MAX_ITEMS_PER_JOB,
-} from "../import/import.service.js";
+import { isImportableImage } from "../import/import.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PrismaService } from "../prisma/prisma.service.js";
-import { sanitizeNetdiskName } from "./netdisk-paths.js";
 import type { NetdiskJobPayload } from "./netdisk-sync.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
-import { NetdiskSyncService } from "./netdisk-sync.service.js";
+import {
+  NetdiskSyncService,
+  PENDING_FILES_REPORT_LIMIT,
+} from "./netdisk-sync.service.js";
 
-const IMPORT_BULL_JOB_OPTIONS = {
-  attempts: 3,
-  backoff: { type: "exponential" as const, delay: 5_000 },
-  removeOnComplete: true,
-};
+/** 百度 list 单页条数（与 API 分页一致）。 */
+const SCAN_WALK_PAGE = 100;
 
 type PushPayload = Extract<NetdiskJobPayload, { type: "push" }>;
-type MovePayload = Extract<NetdiskJobPayload, { type: "move" }>;
-type RenamePayload = Extract<NetdiskJobPayload, { type: "renameAlbum" }>;
 type UploadManagedPayload = Extract<
   NetdiskJobPayload,
   { type: "uploadManaged" }
 >;
 
 /**
- * 网盘同步 worker：push（上行三阶段上传）/ scan（下行增量 + 缺失报告）/
- * move / renameAlbum（改名与移动传播）/ uploadManaged（托管文件直传，
- * ADR 0004）。删除不自动传播（ADR 0002）。
+ * 网盘同步 worker：push（上行三阶段上传，落点 library/）/ scan（下行：
+ * 待导入发现 + 路径缓存刷新 + 母本丢失告警）/ uploadManaged（托管文件
+ * 直传，ADR 0004）。ADR 0006 后扫描不建专辑、不自动导入；move/rename
+ * 传播已随目录解耦退役。
  * 每日扫描的 repeatable 任务由 NetdiskSyncService 注册。
  */
 @Processor("netdisk-sync", { concurrency: 2 })
@@ -53,7 +42,6 @@ export class NetdiskProcessor extends WorkerHost {
     private readonly baiduApi: BaiduApiService,
     private readonly credentials: BaiduCredentialService,
     private readonly sync: NetdiskSyncService,
-    @InjectQueue("import") private readonly importQueue: Queue,
   ) {
     super();
   }
@@ -64,10 +52,6 @@ export class NetdiskProcessor extends WorkerHost {
         return this.runPush(job as Job<PushPayload>);
       case "scan":
         return this.runScan(job.data.source);
-      case "move":
-        return this.runMove(job.data as MovePayload);
-      case "renameAlbum":
-        return this.runRenameAlbum(job.data as RenamePayload);
       case "uploadManaged":
         return this.runManagedUpload(job as Job<UploadManagedPayload>);
     }
@@ -172,7 +156,7 @@ export class NetdiskProcessor extends WorkerHost {
     }
 
     try {
-      await this.walkAndImport();
+      await this.walkAndIndex();
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "未知错误（扫描失败）";
@@ -180,21 +164,29 @@ export class NetdiskProcessor extends WorkerHost {
       await this.sync.saveScanReport({
         status: "FAILED",
         scannedAt: new Date().toISOString(),
-        albumsCreated: [],
-        importedCount: 0,
+        pendingCount: 0,
+        pendingFiles: [],
+        pathsRefreshed: 0,
         masterLost: [],
         error: message,
       });
     }
   }
 
-  /** 遍历 /apps/{应用名}/ 全树：新文件夹建专辑（仅链接可见）、新照片自动导入、对照缺失。 */
-  private async walkAndImport(): Promise<void> {
+  /**
+   * 遍历 /apps/{应用名}/ 全树（ADR 0006 扫描降级，只做三件事）：
+   * 1. 发现待导入文件（未被任何照片索引、不在托管清单的图片）→ 报告待导入清单；
+   * 2. 按 fsId 刷新已索引照片的 netdiskPath 缓存（管理员在网盘 App 内自由
+   *    移动/改名后，照片↔文件映射不丢）；
+   * 3. 报告母本丢失（已索引 fsid 本次未出现在网盘）。
+   */
+  private async walkAndIndex(): Promise<void> {
     await this.sync.saveScanReport({
       status: "RUNNING",
       scannedAt: new Date().toISOString(),
-      albumsCreated: [],
-      importedCount: 0,
+      pendingCount: 0,
+      pendingFiles: [],
+      pathsRefreshed: 0,
       masterLost: [],
       error: null,
     });
@@ -202,224 +194,97 @@ export class NetdiskProcessor extends WorkerHost {
     const appDir = await this.sync.resolveAppDir();
     const known = await this.prisma.photo.findMany({
       where: { netdiskFsId: { not: null } },
-      select: { netdiskFsId: true },
-    });
-    const knownFsIds = new Set(known.map((photo) => photo.netdiskFsId ?? ""));
-
-    const seen = new Set<string>();
-    const newFiles: {
-      fsId: number;
-      filename: string;
-      dirName: string;
-    }[] = [];
-    await this.walk(appDir, seen, knownFsIds, newFiles);
-
-    // 托管文件登记自愈（网盘上已不存在的登记清除）+ 过滤：托管文件
-    // 不进 Photo 表、不进相册（ADR 0004，直接上传通道的文件）
-    await this.sync.pruneManagedEntries(seen);
-    const managedFsIds = await this.sync.listManagedFsIds();
-    const importableFiles = newFiles.filter(
-      (file) => !managedFsIds.has(String(file.fsId)),
-    );
-
-    // 新文件按所在文件夹归到专辑（目录名 = 规范化后的专辑标题）
-    const albums = await this.prisma.album.findMany({
-      select: { id: true, title: true },
-    });
-    const byName = new Map(
-      albums.map((a) => [sanitizeNetdiskName(a.title), a]),
-    );
-    const albumsCreated: string[] = [];
-    const perAlbum = new Map<string, { fsId: number; filename: string }[]>();
-    const appDirName = appDir.split("/").pop() ?? "";
-
-    for (const file of importableFiles) {
-      // 应用根目录下的散文件没有专辑语义，跳过（报告中体现为不导入）
-      if (file.dirName === appDirName) {
-        continue;
-      }
-      let album = byName.get(file.dirName);
-      if (!album) {
-        album = await this.prisma.album.create({
-          data: {
-            publicId: generatePublicId(),
-            shareToken: generateShareToken(),
-            title: file.dirName,
-            visibility: "UNLISTED",
-          },
-        });
-        byName.set(file.dirName, album);
-        albumsCreated.push(album.title);
-      }
-      const batch = perAlbum.get(album.id) ?? [];
-      batch.push({ fsId: file.fsId, filename: file.filename });
-      perAlbum.set(album.id, batch);
-    }
-
-    // 按专辑分批创建导入任务（复用 M5 的 import 队列，成功后回写 netdiskFsId）
-    let importedCount = 0;
-    for (const [albumId, files] of perAlbum) {
-      for (let i = 0; i < files.length; i += MAX_ITEMS_PER_JOB) {
-        const batch = files.slice(i, i + MAX_ITEMS_PER_JOB);
-        const job = await this.prisma.importJob.create({
-          data: {
-            source: "BAIDU",
-            albumId,
-            total: batch.length,
-            items: {
-              createMany: {
-                data: batch.map((file) => ({
-                  sourceFileId: String(file.fsId),
-                  filename: file.filename,
-                })),
-              },
-            },
-          },
-        });
-        await this.importQueue.add(
-          "import",
-          { importJobId: job.id },
-          IMPORT_BULL_JOB_OPTIONS,
-        );
-        importedCount += batch.length;
-      }
-    }
-
-    // 母本丢失告警（ADR 0005）：站内已镜像的 fsid 本次未出现在网盘 →
-    // 本地按「首推成功即删」也无原件，母版唯一权威副本丢失，仅告警不可自动修复
-    const mirrored = await this.prisma.photo.findMany({
-      where: { netdiskFsId: { not: null } },
       select: {
         id: true,
         publicId: true,
         netdiskFsId: true,
         netdiskPath: true,
-        album: { select: { title: true } },
       },
     });
-    const masterLost: NetdiskMasterLostPhoto[] = mirrored
+    const knownFsIds = new Set(known.map((photo) => photo.netdiskFsId ?? ""));
+
+    // fsId → 当前网盘路径（本次 walk 看到的全部文件）
+    const seen = new Map<string, string>();
+    await this.walk(appDir, seen);
+
+    // 托管文件登记自愈（网盘上已不存在的登记清除）
+    await this.sync.pruneManagedEntries(new Set(seen.keys()));
+    const managedFsIds = await this.sync.listManagedFsIds();
+
+    // 1. 待导入文件：未被照片索引、不在托管清单的图片
+    const pendingFiles: NetdiskPendingFile[] = [];
+    for (const [fsId, path] of seen) {
+      if (knownFsIds.has(fsId) || managedFsIds.has(fsId)) {
+        continue;
+      }
+      const filename = path.split("/").pop() ?? path;
+      if (!isImportableImage(filename, null)) {
+        continue;
+      }
+      pendingFiles.push({
+        fsId,
+        path,
+        filename,
+        // size 仅用于展示与导入入参占位；精确值在导入时由网盘返回，这里置 0
+        size: 0,
+      });
+    }
+
+    // 2. 路径缓存刷新：按 fsId 对照，netdiskPath 变了就更新（目录结构无语义，
+    //    缓存只服务展示与删除联动的路径匹配）
+    let pathsRefreshed = 0;
+    for (const photo of known) {
+      const currentPath = photo.netdiskFsId
+        ? seen.get(photo.netdiskFsId)
+        : undefined;
+      if (currentPath && currentPath !== photo.netdiskPath) {
+        await this.prisma.photo.update({
+          where: { id: photo.id },
+          data: { netdiskPath: currentPath },
+        });
+        pathsRefreshed += 1;
+      }
+    }
+
+    // 3. 母本丢失告警（ADR 0005）：站内已索引的 fsid 本次未出现在网盘 →
+    //    本地按「首推成功即删」也无原件，母版唯一权威副本丢失，仅告警不可自动修复
+    const masterLost: NetdiskMasterLostPhoto[] = known
       .filter((photo) => !seen.has(photo.netdiskFsId ?? ""))
       .map((photo) => ({
         photoId: photo.id,
         publicId: photo.publicId,
         filename: photo.netdiskPath?.split("/").pop() ?? photo.publicId,
-        albumTitle: photo.album.title,
       }));
 
     await this.sync.saveScanReport({
       status: "DONE",
       scannedAt: new Date().toISOString(),
-      albumsCreated,
-      importedCount,
+      pendingCount: pendingFiles.length,
+      pendingFiles: pendingFiles.slice(0, PENDING_FILES_REPORT_LIMIT),
+      pathsRefreshed,
       masterLost,
       error: null,
     });
     this.logger.log(
-      `网盘扫描完成：导入 ${importedCount} 张，新建专辑 ${albumsCreated.length} 个，母本丢失 ${masterLost.length} 张`,
+      `网盘扫描完成：待导入 ${pendingFiles.length} 个，路径缓存刷新 ${pathsRefreshed} 条，母本丢失 ${masterLost.length} 张`,
     );
   }
 
-  /** 递归遍历目录（分页），记录全部 fsid 与未镜像的图片文件。 */
-  private async walk(
-    dir: string,
-    seen: Set<string>,
-    knownFsIds: Set<string>,
-    newFiles: { fsId: number; filename: string; dirName: string }[],
-  ): Promise<void> {
+  /** 递归遍历目录（分页），记录全部文件的 fsid → 路径。 */
+  private async walk(dir: string, seen: Map<string, string>): Promise<void> {
     for (let page = 1; ; page++) {
       const response = await this.credentials.withAccessToken((token) =>
         this.baiduApi.list(token, dir, page),
       );
       for (const entry of response.list ?? []) {
-        seen.add(String(entry.fs_id));
+        seen.set(String(entry.fs_id), entry.path);
         if (entry.isdir === 1) {
-          await this.walk(entry.path, seen, knownFsIds, newFiles);
-        } else if (
-          isImportableImage(entry.server_filename, entry.category) &&
-          !knownFsIds.has(String(entry.fs_id))
-        ) {
-          newFiles.push({
-            fsId: entry.fs_id,
-            filename: entry.server_filename,
-            dirName: entry.path.split("/").slice(-2, -1)[0] ?? "",
-          });
+          await this.walk(entry.path, seen);
         }
       }
-      if ((response.list ?? []).length < 100) {
+      if ((response.list ?? []).length < SCAN_WALK_PAGE) {
         break;
       }
-    }
-  }
-
-  // ---- 改名/移动传播 ----
-
-  private async runMove(data: {
-    photoId: string;
-    destAlbumTitle: string;
-  }): Promise<void> {
-    const photo = await this.prisma.photo.findUnique({
-      where: { id: data.photoId },
-      select: { netdiskPath: true },
-    });
-    if (!photo?.netdiskPath) {
-      return;
-    }
-    const appDir = await this.sync.resolveAppDir();
-    const destDir = `${appDir}/${sanitizeNetdiskName(data.destAlbumTitle)}`;
-    const filename = photo.netdiskPath.split("/").pop() ?? "";
-    await this.credentials.withAccessToken((token) =>
-      this.baiduApi.filemanager(token, "move", [
-        { path: photo.netdiskPath ?? "", dest: destDir, newname: filename },
-      ]),
-    );
-    await this.prisma.photo.update({
-      where: { id: data.photoId },
-      data: { netdiskPath: `${destDir}/${filename}` },
-    });
-  }
-
-  private async runRenameAlbum(data: {
-    albumId: string;
-    oldTitle: string;
-    newTitle: string;
-  }): Promise<void> {
-    const oldName = sanitizeNetdiskName(data.oldTitle);
-    const newName = sanitizeNetdiskName(data.newTitle);
-    if (oldName === newName) {
-      return;
-    }
-    const appDir = await this.sync.resolveAppDir();
-    const oldDir = `${appDir}/${oldName}`;
-    const newDir = `${appDir}/${newName}`;
-    try {
-      await this.credentials.withAccessToken((token) =>
-        this.baiduApi.filemanager(token, "rename", [
-          { path: oldDir, newname: newName },
-        ]),
-      );
-    } catch (error) {
-      // 目录不存在 = 该专辑从未推送过，视为成功跳过
-      if (!(error instanceof BaiduApiError && error.errno === -9)) {
-        throw error;
-      }
-      this.logger.log(`网盘目录不存在，跳过重命名：${oldDir}`);
-      return;
-    }
-    // 同步修正该专辑照片记录的镜像路径前缀
-    const photos = await this.prisma.photo.findMany({
-      where: {
-        albumId: data.albumId,
-        netdiskPath: { startsWith: `${oldDir}/` },
-      },
-      select: { id: true, netdiskPath: true },
-    });
-    for (const photo of photos) {
-      await this.prisma.photo.update({
-        where: { id: photo.id },
-        data: {
-          netdiskPath: photo.netdiskPath?.replace(`${oldDir}/`, `${newDir}/`),
-        },
-      });
     }
   }
 }

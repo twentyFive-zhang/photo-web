@@ -29,19 +29,18 @@ import type { Env } from "../config/env.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { StorageService } from "../storage/storage.service.js";
-import { netdiskFilename, sanitizeNetdiskName } from "./netdisk-paths.js";
+import {
+  NETDISK_LIBRARY_DIR,
+  netdiskLibraryFilename,
+} from "./netdisk-paths.js";
+
+/** 待导入文件在扫描报告中的明细展示上限（全量看 pendingCount）。 */
+export const PENDING_FILES_REPORT_LIMIT = 200;
 
 /** 网盘同步队列任务类型。 */
 export type NetdiskJobPayload =
   | { type: "push"; photoId: string }
   | { type: "scan"; source: "daily" | "manual" }
-  | { type: "move"; photoId: string; destAlbumTitle: string }
-  | {
-      type: "renameAlbum";
-      albumId: string;
-      oldTitle: string;
-      newTitle: string;
-    }
   | {
       /** 托管文件直接上传（临时文件已落盘，分片推百度；ADR 0004）。 */
       type: "uploadManaged";
@@ -86,12 +85,13 @@ const MAX_PUSH_ALL = 2000;
 type PushAllState = { queued: number; done: number; failed: number };
 
 /**
- * 网盘镜像同步编排（ADR 0005：网盘 = 母版唯一权威存储）：
- * - 上行：push（单张）/ pushAll（存量回填），三阶段上传成功后回写映射并
- *   删除本地暂存原件（变体保留）；失败自动重试，成功前原件一直在本地
- * - 下行：scan（增量导入 + 母本丢失告警）
- * - 传播：move / renameAlbum；站内删除不碰网盘，文件自动转托管归档
- *   （JIANGLIUER-102，见 ADR 0005 注记）
+ * 网盘母版同步编排（ADR 0005 母版权威 + ADR 0006 目录解耦）：
+ * - 上行：push（单张）/ pushAll（存量回填），落点统一 /apps/{应用名}/library/
+ *   （publicId 命名），三阶段上传成功后回写 fsid 索引并删除本地暂存原件
+ * - 下行：scan（发现待导入文件 + 按 fsId 刷新路径缓存 + 母本丢失告警），
+ *   不建专辑、不自动导入
+ * - 托管文件直传（ADR 0004）：与照片流程无关的直接管理通道
+ * - 删除不变量：站内删除不碰网盘；网盘文件永不删除，脱离索引即回待导入
  */
 @Injectable()
 export class NetdiskSyncService implements OnModuleInit {
@@ -132,43 +132,14 @@ export class NetdiskSyncService implements OnModuleInit {
     );
   }
 
-  /** 照片换专辑后的网盘移动入队（只针对已镜像的照片）。 */
-  async enqueueMoves(
-    entries: { photoId: string; destAlbumTitle: string }[],
-  ): Promise<void> {
-    if (entries.length === 0) {
-      return;
-    }
-    await this.queue.addBulk(
-      entries.map((entry) => ({
-        name: "netdisk-sync",
-        data: { type: "move" as const, ...entry },
-        opts: BULL_JOB_OPTIONS,
-      })),
-    );
-  }
-
-  /** 专辑重命名后的网盘目录重命名入队。 */
-  async enqueueRenameAlbum(input: {
-    albumId: string;
-    oldTitle: string;
-    newTitle: string;
-  }): Promise<void> {
-    await this.queue.add(
-      "netdisk-sync",
-      { type: "renameAlbum", ...input },
-      BULL_JOB_OPTIONS,
-    );
-  }
-
   /**
-   * ---------- 托管文件（直接上传 + 站内删除归档，ADR 0004 / JIANGLIUER-102） ----------
+   * ---------- 托管文件（ADR 0004 直接上传通道） ----------
    *
-   * 托管文件不进 Photo 表、不进相册；仅在 SiteSetting.netdiskManagedFiles
-   * 登记 fsId/path，供下行扫描跳过。两类来源：管理员直接上传（ADR 0004），
-   * 以及站内删除（专辑/单张/批量）后自动转托管归档的网盘文件——删除不碰
-   * 网盘，文件登记后脱离扫描，解除托管即恢复（按目录重导）。登记随扫描
-   * 自愈修剪（网盘上已不存在的条目清除），页内删除时按路径同步移除。
+   * 托管文件不进 Photo 表、不进专辑；仅在 SiteSetting.netdiskManagedFiles
+   * 登记 fsId/path，供下行扫描跳过。唯一来源：管理员在网盘管理页直接上传
+   * 的任意格式文件（ADR 0006 后「站内删除转托管归档」语义退役——删除照片
+   * 只移除索引，文件回到待导入状态）。登记随扫描自愈修剪（网盘上已不存在
+   * 的条目清除），页内删除时按路径同步移除。
    */
 
   /** 托管登记读改写串行化（单进程内互斥；跨进程无并发写入方）。 */
@@ -212,7 +183,7 @@ export class NetdiskSyncService implements OnModuleInit {
     });
   }
 
-  /** 托管登记清单（设置页「网盘归档（托管）」卡片展示）。 */
+  /** 托管登记清单（设置页「托管文件」展示）。 */
   async listManagedFiles(): Promise<NetdiskManagedFiles> {
     return this.readManagedFiles();
   }
@@ -255,9 +226,9 @@ export class NetdiskSyncService implements OnModuleInit {
   }
 
   /**
-   * 删除网盘条目（单/批/夹通用）后的镜像联动：路径精确匹配或目录前缀
-   * 匹配的照片清 netdiskFsId/netdiskPath（变回「未推送」，全量推送/按专辑
-   * 补推可恢复镜像）。托管登记由调用方按需另行处理。
+   * 删除网盘条目（单/批/夹通用）后的索引联动：路径精确匹配或目录前缀
+   * 匹配的照片清 netdiskFsId/netdiskPath（变回「未同步」，暂存原件仍在的
+   * 可全量推送恢复）。托管登记由调用方按需另行处理。
    */
   async clearMirrorMappings(paths: string[]): Promise<number> {
     if (paths.length === 0) {
@@ -444,10 +415,11 @@ export class NetdiskSyncService implements OnModuleInit {
   }
 
   /**
-   * 站内删除时移除对应照片的上行推送任务（竞态第一道闸，JIANGLIUER-102）：
+   * 站内删除时移除对应照片的上行推送任务（竞态第一道闸）：
    * 等待/延迟中的 push-${photoId} 任务直接删——照片已删，推上去只会留下
    * 无映射的孤儿文件。正在分片上传中的活跃任务不硬拆（可能已上传大半），
-   * 交给 pushPhoto 回写的 P2025 兜底登记托管归档（第二道闸），两道并用。
+   * 交给 pushPhoto 回写的 P2025 兜底记录日志（第二道闸；文件脱离索引后
+   * 由扫描回收到待导入清单，重新导入即恢复）。
    */
   async removeQueuedPushJobs(photoIds: string[]): Promise<void> {
     for (const photoId of photoIds) {
@@ -465,7 +437,7 @@ export class NetdiskSyncService implements OnModuleInit {
   /**
    * 推送失败照片重推：清掉旧映射与失败记录后复用既有 push 管线
    * （jobId 与单张推送相同，天然去重；推送成功后 netdiskFsId 重新回写）。
-   * 仅适用于推送失败的照片——其暂存原件仍在本地，可重试；网盘侧母本丢失
+   * 仅适用于推送失败的照片——其暂存原件仍在本地，可重试；网盘侧母版丢失
    * 的照片本地无原件，不可重推（设置页只告警，ADR 0005）。
    * 入队前先清理停在 failed 集合的旧任务（见 removeFailedPushJobs）。
    * 返回实际入队数量。
@@ -507,11 +479,7 @@ export class NetdiskSyncService implements OnModuleInit {
   async recordPushFailure(photoId: string, error: unknown): Promise<void> {
     const photo = await this.prisma.photo.findUnique({
       where: { id: photoId },
-      select: {
-        publicId: true,
-        netdiskPath: true,
-        album: { select: { title: true } },
-      },
+      select: { publicId: true, netdiskPath: true },
     });
     if (!photo) {
       return;
@@ -522,7 +490,6 @@ export class NetdiskSyncService implements OnModuleInit {
     const data = {
       publicId: photo.publicId,
       filename,
-      albumTitle: photo.album.title,
       errno,
       error: message,
       attemptedAt: new Date(),
@@ -533,7 +500,7 @@ export class NetdiskSyncService implements OnModuleInit {
       create: { photoId, ...data },
     });
     this.logger.warn(
-      `推送网盘失败（重试耗尽）：${filename}（${photo.album.title}）errno=${errno ?? "-"} ${message}`,
+      `推送网盘失败（重试耗尽）：${filename} errno=${errno ?? "-"} ${message}`,
     );
   }
 
@@ -548,7 +515,7 @@ export class NetdiskSyncService implements OnModuleInit {
   }
 
   /**
-   * 按专辑补推：该专辑所有未同步照片入队（jobId 与单张推送相同）。
+   * 按专辑补推：该专辑成员中未同步的照片入队（jobId 与单张推送相同）。
    * 入队前先清理停在 failed 集合的旧任务，否则同 jobId 的 addBulk 被
    * 静默去重、补推被吞（JIANGLIUER-24）。返回入队数量。
    */
@@ -556,11 +523,12 @@ export class NetdiskSyncService implements OnModuleInit {
     if (!(await this.credentials.isConnected())) {
       return 0;
     }
-    const photos = await this.prisma.photo.findMany({
-      where: { albumId, netdiskFsId: null },
-      select: { id: true },
-      orderBy: { createdAt: "asc" },
+    const members = await this.prisma.albumPhoto.findMany({
+      where: { albumId, photo: { netdiskFsId: null } },
+      select: { photo: { select: { id: true, createdAt: true } } },
+      orderBy: { photo: { createdAt: "asc" as const } },
     });
+    const photos = members.map((member) => member.photo);
     if (photos.length === 0) {
       return 0;
     }
@@ -627,8 +595,9 @@ export class NetdiskSyncService implements OnModuleInit {
     await this.saveScanReport({
       status: "RUNNING",
       scannedAt: new Date().toISOString(),
-      albumsCreated: [],
-      importedCount: 0,
+      pendingCount: 0,
+      pendingFiles: [],
+      pathsRefreshed: 0,
       masterLost: [],
       error: null,
     });
@@ -663,10 +632,6 @@ export class NetdiskSyncService implements OnModuleInit {
     });
   }
 
-  /**
-   * 解析应用目录 /apps/{应用名}：list /apps 取第一个目录（个人账号一个应用一个目录）。
-   * 结果缓存 5 分钟；目录还没建时抛错（用户需先在网盘建 /我的应用数据/{应用名}/）。
-   */
   /**
    * 解析应用目录 /apps/{应用名}。优先读 .env 的 BAIDU_APP_NAME（应用目录名即
    * 创建应用时填写的名称）；未配置时退回尝试列 /apps 虚拟根（部分账号不可列，
@@ -704,9 +669,12 @@ export class NetdiskSyncService implements OnModuleInit {
   }
 
   /**
-   * 上行推送单张照片（push 任务的执行体）：
+   * 上行推送单张照片（push 任务的执行体，ADR 0006 统一落点）：
    * 读暂存原件 → 整体/首片/分片 MD5 → precreate → 4MB 分片 superfile2 →
-   * create → 回写映射 → 删除本地暂存原件（仅原件，变体保留）。
+   * create → 回写 fsid 索引 → 删除本地暂存原件（仅原件，变体保留）。
+   * 落点固定 /apps/{应用名}/library/{publicId}.{ext}——目录名不再由专辑标题
+   * 派生，library/ 下结构不承载任何系统语义（管理员可自由移动，扫描按 fsId
+   * 刷新路径缓存）。
    * 已同步（netdiskFsId 已设）直接跳过——网盘导入回写与推送入队有竞态，这里兜底
    * （文件确实在网盘上，残留的失败记录一并清除）。
    */
@@ -716,10 +684,8 @@ export class NetdiskSyncService implements OnModuleInit {
       select: {
         id: true,
         publicId: true,
-        title: true,
         originalKey: true,
         netdiskFsId: true,
-        album: { select: { title: true } },
       },
     });
     if (!photo || photo.netdiskFsId) {
@@ -738,8 +704,11 @@ export class NetdiskSyncService implements OnModuleInit {
     }
 
     const appDir = await this.resolveAppDir();
-    const destDir = `${appDir}/${sanitizeNetdiskName(photo.album.title)}`;
-    const path = `${destDir}/${netdiskFilename(photo)}`;
+    // 统一母版落点：/apps/{应用名}/library/{publicId}.{ext}（ADR 0006）
+    const path = `${appDir}/${NETDISK_LIBRARY_DIR}/${netdiskLibraryFilename({
+      publicId: photo.publicId,
+      originalKey: photo.originalKey,
+    })}`;
     const buffer = await this.storage.get(photo.originalKey);
 
     // 分片 MD5 + 整体/首 256KB MD5（秒传探测参数，不依赖成功）
@@ -789,9 +758,9 @@ export class NetdiskSyncService implements OnModuleInit {
       throw new BaiduApiError("提交上传未返回 fs_id", -1);
     }
 
-    // 回写映射。竞态兜底：分片上传进行中照片被站内删除（P2025）→ 上传已
-    // 成功、网盘上留下无映射文件，次日扫描会复活 → 此刻 destPath/fsId 均已
-    // 知，直接登记托管归档（JIANGLIUER-102）。登记失败照常抛错让任务重试。
+    // 回写索引。竞态兜底：分片上传进行中照片被站内删除（P2025）→ 上传已
+    // 成功、网盘上留下无索引文件——按 ADR 0006 删除不变量只记日志：文件在
+    // 网盘原位保留，下轮扫描按「未被索引」回收到待导入清单，重新导入即恢复。
     try {
       await this.prisma.photo.update({
         where: { id: photoId },
@@ -801,9 +770,8 @@ export class NetdiskSyncService implements OnModuleInit {
       if (!isMissingRecordError(error)) {
         throw error;
       }
-      await this.addManagedEntry({ fsId: String(fsId), path });
       this.logger.warn(
-        `照片上传完成前已被站内删除，网盘文件转托管归档：${path}`,
+        `照片上传完成前已被站内删除，网盘文件转入待导入状态：${path}`,
       );
     }
     await this.clearPushFailures([photoId]);

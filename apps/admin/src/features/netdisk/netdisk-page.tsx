@@ -49,13 +49,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { ApiError, apiFetch } from "@/lib/api";
 import { AdminShell } from "@/lib/shell";
 import { baiduStatusQuery } from "../albums/baidu-import-dialog";
@@ -136,15 +129,10 @@ function NetdiskBrowser() {
   // 树根对应的服务端目录（上传完成/删除后按服务端路径刷新树节点用）
   const rootDirRef = useRef<string>("");
 
-  // 站内对照：已导入 fsid 集合 + 目录名 → 专辑标题
+  // 站内对照：已导入（被照片索引）的 fsid 集合
   const fsidsQuery = useQuery({
     queryKey: ["netdisk-synced-fsids"],
     queryFn: () => apiFetch<{ fsids: string[] }>("/admin/netdisk/synced-fsids"),
-    enabled: statusQuery.data?.connected === true,
-  });
-  const albumsQuery = useQuery({
-    queryKey: ["albums"],
-    queryFn: () => apiFetch<{ id: string; title: string }[]>("/admin/albums"),
     enabled: statusQuery.data?.connected === true,
   });
   // 后台上传任务（有进行中/等待任务时 2s 轮询，否则 15s 兜底）
@@ -423,13 +411,11 @@ function NetdiskBrowser() {
 
   const createImport = useMutation({
     mutationFn: async (vars: {
-      albumId: string;
-      albumTitle: string;
       entries: CreateBaiduImportInput["entries"];
     }) => {
       await apiFetch("/admin/imports/baidu", {
         method: "POST",
-        body: JSON.stringify({ albumId: vars.albumId, entries: vars.entries }),
+        body: JSON.stringify({ entries: vars.entries }),
       });
       return vars;
     },
@@ -439,20 +425,16 @@ function NetdiskBrowser() {
       void queryClient.invalidateQueries({
         queryKey: ["netdisk-synced-fsids"],
       });
+      void queryClient.invalidateQueries({
+        queryKey: ["import-jobs"],
+      });
       toast.success(
-        `已创建导入任务（${vars.entries.length} 项）到「${vars.albumTitle}」，进度见专辑页`,
+        `已创建导入任务（${vars.entries.length} 项）——照片将进入照片库，之后在专辑编辑页「添加照片」挑图`,
       );
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "创建导入任务失败"),
   });
-  const albumByDirName = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const album of albumsQuery.data ?? []) {
-      map.set(sanitizeNetdiskName(album.title), album.title);
-    }
-    return map;
-  }, [albumsQuery.data]);
 
   /** 展开节点里带缩略图的图片（灯箱翻页用）。 */
   const visibleImages = useMemo(() => {
@@ -475,9 +457,6 @@ function NetdiskBrowser() {
     const lightboxIndex = visibleImages.findIndex(
       (image) => image.path === entry.path,
     );
-    const albumTitle = entry.isDir
-      ? albumByDirName.get(sanitizeNetdiskName(entry.serverFilename))
-      : undefined;
 
     return (
       <div key={entry.path}>
@@ -549,22 +528,14 @@ function NetdiskBrowser() {
             {entry.serverFilename}
           </span>
 
-          {entry.isDir ? (
-            albumTitle ? (
-              <Badge className="shrink-0">专辑：{albumTitle}</Badge>
-            ) : (
-              <Badge className="shrink-0" variant="outline">
-                未对应
-              </Badge>
-            )
-          ) : isImage ? (
+          {!entry.isDir && isImage ? (
             synced ? (
               <Badge className="shrink-0" variant="success">
                 已导入
               </Badge>
             ) : (
               <Badge className="shrink-0" variant="warning">
-                未导入
+                待导入
               </Badge>
             )
           ) : null}
@@ -920,7 +891,7 @@ function NetdiskBrowser() {
 
       <ConfirmDialog
         danger
-        description={`「${deleteTarget?.label ?? ""}」将从网盘删除（进回收站）。若其中包含已导入照片的镜像，对应照片会变回「未推送」，可用全量推送/按专辑补推恢复。`}
+        description={`「${deleteTarget?.label ?? ""}」将从网盘删除（进回收站）。若其中包含已导入照片的源文件，对应照片会变回「未同步」，可用全量推送恢复（暂存原件仍在本地时）。`}
         onConfirm={() => deleteEntries.mutateAsync(deleteTarget?.paths ?? [])}
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null);
@@ -930,16 +901,18 @@ function NetdiskBrowser() {
         title="删除网盘内容"
       />
 
-      <AlbumPickerDialog
-        count={importTarget?.length ?? 0}
+      <ConfirmDialog
+        confirmText="开始导入"
+        description={`将所选 ${importTarget?.length ?? 0} 项（文件夹由服务端展开，仅图片）登记为照片——只入照片库，不进任何专辑；之后在专辑编辑页「添加照片」挑图。`}
+        onConfirm={() => {
+          if (importTarget) createImport.mutate({ entries: importTarget });
+        }}
         onOpenChange={(open) => {
           if (!open) setImportTarget(null);
         }}
-        onSubmit={(albumId, albumTitle) => {
-          if (!importTarget) return;
-          createImport.mutate({ albumId, albumTitle, entries: importTarget });
-        }}
         open={importTarget !== null}
+        pending={createImport.isPending}
+        title="导入到照片库"
       />
       {viewing !== null && visibleImages[viewing] && (
         <PhotoLightbox
@@ -1046,74 +1019,5 @@ function UploadTasksPanel(props: {
         ))}
       </div>
     </div>
-  );
-}
-
-/** 导入发起：选专辑 → POST /admin/imports/baidu → toast 收尾。 */
-function AlbumPickerDialog(props: {
-  count: number;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSubmit: (albumId: string, albumTitle: string) => void;
-}) {
-  const { count, open, onOpenChange, onSubmit } = props;
-  const [albumId, setAlbumId] = useState("");
-  const albumsQuery = useQuery({
-    queryKey: ["albums"],
-    queryFn: () =>
-      apiFetch<{ id: string; title: string; photoCount: number }[]>(
-        "/admin/albums",
-      ),
-    enabled: open,
-  });
-  const albums = albumsQuery.data ?? [];
-  const chosen = albums.find((album) => album.id === albumId);
-
-  return (
-    <Dialog
-      onOpenChange={(next) => {
-        if (!next) setAlbumId("");
-        onOpenChange(next);
-      }}
-      open={open}
-    >
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>导入到专辑</DialogTitle>
-          <DialogDescription>
-            将所选内容（{count}
-            项，文件夹由服务端展开）导入到目标专辑；导入成功后自动标记为已同步。
-          </DialogDescription>
-        </DialogHeader>
-        <Select onValueChange={setAlbumId} value={albumId || undefined}>
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="选择目标专辑…" />
-          </SelectTrigger>
-          <SelectContent>
-            {albums.map((album) => (
-              <SelectItem key={album.id} value={album.id}>
-                {album.title}（{album.photoCount} 张）
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <DialogFooter>
-          <Button
-            onClick={() => onOpenChange(false)}
-            type="button"
-            variant="outline"
-          >
-            取消
-          </Button>
-          <Button
-            disabled={!albumId}
-            onClick={() => chosen && onSubmit(chosen.id, chosen.title)}
-            type="button"
-          >
-            创建导入任务
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

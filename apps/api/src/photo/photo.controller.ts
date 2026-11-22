@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -9,18 +10,19 @@ import {
   Patch,
   Post,
   Put,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import type {
   BatchDeletePhotosInput,
-  BatchMovePhotosInput,
   Photo,
   SetPhotoTagsInput,
   UpdatePhotoInput,
 } from "@photo/shared";
 import {
   batchDeletePhotosInputSchema,
-  batchMovePhotosInputSchema,
   setPhotoTagsInputSchema,
   updatePhotoInputSchema,
 } from "@photo/shared";
@@ -33,6 +35,12 @@ import { PhotoService } from "./photo.service.js";
 @UseGuards(AdminGuard)
 export class PhotoController {
   constructor(private readonly photoService: PhotoService) {}
+
+  /** 照片库全量列表（专辑编辑挑图弹窗用）。 */
+  @Get()
+  list(): Promise<Photo[]> {
+    return this.photoService.list();
+  }
 
   @Get(":id")
   get(@Param("id") id: string): Promise<Photo> {
@@ -54,6 +62,7 @@ export class PhotoController {
     return this.photoService.rebuildRenditions(id);
   }
 
+  /** 删除照片 = 移除索引；网盘文件原地保留并回到待导入状态（ADR 0006）。 */
   @Delete(":id")
   async remove(@Param("id") id: string): Promise<void> {
     await this.photoService.remove(id);
@@ -68,15 +77,14 @@ export class PhotoController {
     return this.photoService.setTags(id, body);
   }
 
-  @Post("batch-move")
-  @HttpCode(HttpStatus.OK)
-  batchMove(
-    @Body(new ZodValidationPipe(batchMovePhotosInputSchema))
-    body: BatchMovePhotosInput,
-  ): Promise<{ moved: number }> {
-    return this.photoService
-      .batchMove(body.photoIds, body.targetAlbumId)
-      .then((moved) => ({ moved }));
+  /** 本地上传到照片库（multipart，字段名 file）；不进任何专辑。 */
+  @Post("upload")
+  @UseInterceptors(FileInterceptor("file"))
+  upload(@UploadedFile() file?: Express.Multer.File): Promise<Photo> {
+    if (!file) {
+      throw new BadRequestException("缺少文件字段 file");
+    }
+    return this.photoService.upload(file);
   }
 
   @Post("batch-delete")

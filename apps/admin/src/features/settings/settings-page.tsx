@@ -8,8 +8,9 @@ import {
 } from "@photo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Archive,
   Cloud,
+  Inbox,
+  KeyRound,
   Plus,
   QrCode,
   RefreshCw,
@@ -139,7 +140,8 @@ function SettingsForm() {
           updateMutation.mutate({ netdiskDailyScan })
         }
       />
-      <NetdiskArchiveSection />
+      <PendingImportSection />
+      <ManagedFilesSection />
     </main>
   );
 }
@@ -309,13 +311,8 @@ function NetdiskSection({
                   上次扫描（{new Date(report.scannedAt).toLocaleString()}）：
                   {report.status === "FAILED"
                     ? `失败 — ${report.error}`
-                    : `导入 ${report.importedCount} 张，新建专辑 ${report.albumsCreated.length} 个，母本丢失 ${report.masterLost.length} 张`}
+                    : `待导入 ${report.pendingCount} 个，路径缓存刷新 ${report.pathsRefreshed} 条，母本丢失 ${report.masterLost.length} 张`}
                 </p>
-                {report.albumsCreated.length > 0 && (
-                  <p className="mt-1 text-neutral-500">
-                    新专辑：{report.albumsCreated.join("、")}
-                  </p>
-                )}
                 {report.masterLost.length > 0 && (
                   <div className="mt-2 space-y-1.5 rounded-lg border border-red-900/60 bg-red-950/30 p-3">
                     <p className="font-medium text-red-400">
@@ -332,7 +329,7 @@ function NetdiskSection({
                         key={photo.photoId}
                       >
                         <span className="truncate">
-                          {photo.filename}（{photo.albumTitle}）
+                          {photo.filename}（{photo.publicId}）
                         </span>
                       </div>
                     ))}
@@ -352,7 +349,7 @@ function NetdiskSection({
                     key={item.id}
                   >
                     <span className="flex-1 truncate">
-                      {item.filename}（{item.albumTitle}）
+                      {item.filename}
                       <span className="ml-1 text-neutral-500">
                         {new Date(item.attemptedAt).toLocaleString()}{" "}
                         {item.errno !== null ? `errno ${item.errno} · ` : ""}
@@ -407,11 +404,135 @@ function NetdiskSection({
 }
 
 /**
- * 网盘归档（托管）卡片（JIANGLIUER-102，扩展 ADR 0004 可见性）：
- * 站内删除的照片网盘文件 + 直接上传的托管文件统一在此登记展示；
- * 解除托管后下轮扫描按目录重新导入 = 恢复。
+ * 待导入清单卡片（JIANGLIUER-102 归档卡片语义替换，ADR 0006）：
+ * 下行扫描发现的未索引网盘图片在此陈列，可单个/整批导入为照片
+ * （只登记进照片库，不进任何专辑；专辑组成在专辑编辑页挑图）。
+ * 站内删除的照片网盘文件保留原位，回到这份清单；重新导入即恢复。
  */
-function NetdiskArchiveSection() {
+function PendingImportSection() {
+  const queryClient = useQueryClient();
+
+  const statusQuery = useQuery({
+    queryKey: ["netdisk-status"],
+    queryFn: () => apiFetch<NetdiskStatus>("/admin/netdisk/status"),
+  });
+
+  const fsidsQuery = useQuery({
+    queryKey: ["netdisk-synced-fsids"],
+    queryFn: () => apiFetch<{ fsids: string[] }>("/admin/netdisk/synced-fsids"),
+  });
+
+  const importMutation = useMutation({
+    mutationFn: (fsIds: string[]) => {
+      const report = statusQuery.data?.scanReport;
+      const entries = (report?.pendingFiles ?? [])
+        .filter((file) => fsIds.includes(file.fsId))
+        .map((file) => ({
+          fsId: Number(file.fsId),
+          path: file.path,
+          serverFilename: file.filename,
+          isDir: false,
+          size: file.size,
+        }));
+      return apiFetch<unknown>("/admin/imports/baidu", {
+        method: "POST",
+        body: JSON.stringify({ entries }),
+      });
+    },
+    onSuccess: (_data, fsIds) => {
+      toast.success(`已创建导入任务（${fsIds.length} 项），照片进入照片库`);
+      queryClient.invalidateQueries({ queryKey: ["import-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["netdisk-synced-fsids"] });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const report = statusQuery.data?.scanReport;
+  const syncedIds = new Set(fsidsQuery.data?.fsids ?? []);
+  const files = (report?.pendingFiles ?? []).filter(
+    (file) => !syncedIds.has(file.fsId),
+  );
+  const allPending = files.map((file) => file.fsId);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-1.5">
+          <Inbox size={15} />
+          待导入清单
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {statusQuery.isPending || fsidsQuery.isPending ? (
+          <p className="text-sm text-neutral-500">加载中…</p>
+        ) : !report || report.status === "RUNNING" ? (
+          <p className="text-sm text-neutral-500">
+            {report?.status === "RUNNING"
+              ? "扫描进行中…"
+              : "还没有扫描报告——先在上方「立即检查网盘」触发一次扫描。"}
+          </p>
+        ) : files.length === 0 ? (
+          <p className="text-sm text-neutral-500">
+            暂无待导入文件。站内删除照片后，其网盘文件会回到这里；重新导入即恢复为照片。
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-neutral-400">
+                源文件库中未被索引的图片共 {report.pendingCount} 个
+                {report.pendingCount > report.pendingFiles.length &&
+                  `（明细展示前 ${report.pendingFiles.length} 个）`}
+                ，以下 {files.length} 个尚未导入：
+              </p>
+              <Button
+                disabled={
+                  importMutation.isPending ||
+                  allPending.length === 0 ||
+                  allPending.length > 500
+                }
+                onClick={() => importMutation.mutate(allPending)}
+                size="sm"
+                type="button"
+              >
+                全部导入（≤500）
+              </Button>
+            </div>
+            <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-lg border border-neutral-800 p-3">
+              {files.map((file) => (
+                <div
+                  className="flex flex-wrap items-center gap-2 text-sm text-neutral-400"
+                  key={file.fsId}
+                >
+                  <span className="flex-1 truncate font-mono text-xs">
+                    {file.path}
+                  </span>
+                  <Button
+                    disabled={importMutation.isPending}
+                    onClick={() => importMutation.mutate([file.fsId])}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    导入
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-neutral-600">
+              导入只把文件登记为照片（不进任何专辑）；组成专辑请到专辑编辑页「添加照片」。
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * 托管文件卡片（ADR 0004 直接管理通道，语义不变）：
+ * 网盘管理页直接上传的任意格式文件登记展示；解除托管后文件回到待导入清单。
+ */
+function ManagedFilesSection() {
   const queryClient = useQueryClient();
   const queryKey = ["netdisk-managed"];
 
@@ -427,7 +548,9 @@ function NetdiskArchiveSection() {
         body: JSON.stringify({ paths }),
       }),
     onSuccess: ({ removed }) => {
-      toast.success(`已解除 ${removed} 条托管登记，下次扫描将按目录重新导入`);
+      toast.success(
+        `已解除 ${removed} 条托管登记，文件回到待导入状态（下次扫描进入待导入清单）`,
+      );
       queryClient.invalidateQueries({ queryKey });
       queryClient.invalidateQueries({ queryKey: ["netdisk-status"] });
     },
@@ -442,8 +565,8 @@ function NetdiskArchiveSection() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-1.5">
-          <Archive size={15} />
-          网盘归档（托管）
+          <KeyRound size={15} />
+          托管文件（非照片直传）
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -451,13 +574,13 @@ function NetdiskArchiveSection() {
           <p className="text-sm text-neutral-500">加载中…</p>
         ) : entries.length === 0 ? (
           <p className="text-sm text-neutral-500">
-            暂无归档。删除专辑/照片后，其网盘文件会保留并登记在这里。
+            暂无托管文件。在网盘管理页直接上传的任意格式文件会登记在这里（不属于照片流程）。
           </p>
         ) : (
           <div className="space-y-2">
             <p className="text-sm text-neutral-400">
               {entries.length}{" "}
-              个文件登记托管：站内已下架，网盘文件保留（扫描跳过）。
+              个托管文件：不属于照片流程，扫描跳过、前台不可见。
             </p>
             <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-lg border border-neutral-800 p-3">
               {entries.map((entry) => (
@@ -489,13 +612,13 @@ function NetdiskArchiveSection() {
         {unmanageTarget !== null && (
           <ConfirmDialog
             confirmText="解除托管"
-            description={`解除后下次扫描会把该网盘文件按所在目录重新导入为照片（专辑以「仅链接」形态重建）。确定解除 ${unmanageTarget} 的托管？`}
+            description={`解除后该文件不再被扫描跳过，将进入待导入清单（可导入为照片）。确定解除 ${unmanageTarget} 的托管？`}
             onConfirm={() => unmanageMutation.mutateAsync([unmanageTarget])}
             onOpenChange={(open) => {
               if (!open) setUnmanageTarget(null);
             }}
             open
-            title="解除托管（恢复导入）"
+            title="解除托管"
           />
         )}
       </CardContent>
