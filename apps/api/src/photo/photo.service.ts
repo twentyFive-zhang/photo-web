@@ -87,11 +87,17 @@ export class PhotoService {
     private readonly baiduDownload: BaiduDownloadService,
   ) {}
 
-  /** 照片库全量列表（挑图弹窗用）：新照片在前。 */
+  /**
+   * 照片库全量列表（挑图弹窗用）：新照片在前。
+   * 只带 THUMB rendition 控制响应体积——挑图只需缩略图，完整两档走 get()。
+   */
   async list(): Promise<Photo[]> {
     const photos = await this.prisma.photo.findMany({
       orderBy: { createdAt: "desc" },
-      include: photoInclude,
+      include: {
+        ...photoInclude,
+        renditions: { where: { variant: "THUMB" as const } },
+      },
     });
     return photos.map(toPhoto);
   }
