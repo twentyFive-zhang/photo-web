@@ -21,7 +21,7 @@ import { BaiduCredentialService } from "../baidu/baidu-credential.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PrismaService } from "../prisma/prisma.service.js";
 
-/** 单个导入任务最多 500 张，防失控展开与超长任务（网盘自动导入分批同用此上限）。 */
+/** 单个导入任务最多 500 张，防失控展开与超长任务。 */
 export const MAX_ITEMS_PER_JOB = 500;
 
 /** 只导入图片：扩展名白名单兜底（category===3 为主判据）。 */
@@ -65,7 +65,6 @@ export function toImportJob(
     id: job.id,
     source: job.source,
     status: job.status,
-    albumId: job.albumId,
     total: job.total,
     completed: job.completed,
     failed: job.failed,
@@ -87,17 +86,12 @@ export class ImportService {
   ) {}
 
   /**
-   * 创建导入任务：所选条目中文件夹在此同步递归展开（图片过滤、500 上限），
-   * 用户确认的总数即精确值。展开用 list 分页，每个 fsid 只入队一次。
+   * 创建导入任务（ADR 0006 收编两段式第一步）：所选条目中文件夹在此同步
+   * 递归展开（图片过滤、500 上限），用户确认的总数即精确值。展开用 list
+   * 分页，每个 fsid 只入队一次。导入只把文件登记为照片（fsid 索引 +
+   * 生成变体），不进任何专辑。
    */
   async createBaiduImport(input: CreateBaiduImportInput): Promise<ImportJob> {
-    const album = await this.prisma.album.findUnique({
-      where: { id: input.albumId },
-      select: { id: true },
-    });
-    if (!album) {
-      throw new NotFoundException("专辑不存在");
-    }
     if (!(await this.credentials.isConnected())) {
       throw new BadRequestException("尚未连接百度网盘");
     }
@@ -125,7 +119,6 @@ export class ImportService {
     const job = await this.prisma.importJob.create({
       data: {
         source: "BAIDU",
-        albumId: input.albumId,
         total: files.size,
         items: {
           createMany: {
@@ -154,10 +147,9 @@ export class ImportService {
     return toImportJob(job);
   }
 
-  /** 专辑最近的任务（进度横幅用）。 */
-  async listByAlbum(albumId: string, take = 5): Promise<ImportJob[]> {
+  /** 最近的导入任务（进度横幅用）。 */
+  async listRecent(take = 5): Promise<ImportJob[]> {
     const jobs = await this.prisma.importJob.findMany({
-      where: { albumId },
       orderBy: { createdAt: "desc" },
       take,
       include: { items: { orderBy: { createdAt: "asc" } } },

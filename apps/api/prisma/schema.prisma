@@ -65,17 +65,32 @@ model Album {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  coverPhoto Photo?      @relation("AlbumCover", fields: [coverPhotoId], references: [id], onDelete: SetNull)
-  photos     Photo[]     @relation("AlbumPhotos")
-  importJobs ImportJob[]
+  coverPhoto Photo?       @relation("AlbumCover", fields: [coverPhotoId], references: [id], onDelete: SetNull)
+  // 成员关系（ADR 0006）：专辑由显式成员组成，与网盘目录无关
+  members    AlbumPhoto[]
 
   @@index([visibility, publishedAt])
+}
+
+/// 成员关系（ADR 0006）：照片与专辑多对多，sortOrder 持有专辑内顺序。
+/// 一张照片可同时属于多个专辑（各自独立排序），也可不属于任何专辑。
+model AlbumPhoto {
+  albumId   String
+  photoId   String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  photo Photo @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@id([albumId, photoId])
+  @@index([photoId])
+  @@index([albumId, sortOrder])
 }
 
 model Photo {
   id          String   @id @default(cuid())
   publicId    String   @unique
-  albumId     String
   title       String?
   caption     String?
   originalKey String   @unique
@@ -83,23 +98,21 @@ model Photo {
   width       Int
   height      Int
   exif        Json?
-  sortOrder   Int      @default(0)
-  // 已推送到百度网盘镜像的文件 fs_id（字符串存 uint64 防精度丢失）；null = 未同步
+  // 已推送到百度网盘的文件 fs_id（字符串存 uint64 防精度丢失）；null = 未同步
   netdiskFsId String?  @unique
-  // 网盘镜像中的完整路径（/apps/{应用名}/{专辑}/{文件名}），move/rename/delete 传播用
+  // 网盘文件完整路径——仅作可修正缓存（管理员可在网盘 App 内自由移动/改名，
+  // 扫描按 fsId 刷新），目录结构不承载任何系统语义（ADR 0006）
   netdiskPath String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  album        Album           @relation("AlbumPhotos", fields: [albumId], references: [id], onDelete: Cascade)
-  coverOfAlbum Album?          @relation("AlbumCover")
-  renditions   PhotoRendition[]
-  tags         PhotoTag[]
-  featured     FeaturedPhoto?
-  importItems  ImportItem[]
-  pushFailure  NetdiskPushFailure?
-
-  @@index([albumId, sortOrder])
+  coverOfAlbum  Album?           @relation("AlbumCover")
+  memberships   AlbumPhoto[]
+  renditions    PhotoRendition[]
+  tags          PhotoTag[]
+  featured      FeaturedPhoto?
+  importItems   ImportItem[]
+  pushFailure   NetdiskPushFailure?
 }
 
 model PhotoRendition {
@@ -144,11 +157,12 @@ model FeaturedPhoto {
   @@index([sortOrder])
 }
 
+/// 导入任务（ADR 0006 收编两段式第一步）：把网盘文件登记为照片，
+/// 不绑定专辑；专辑组成在专辑编辑页挑图完成。
 model ImportJob {
   id        String       @id @default(cuid())
   source    ImportSource
   status    ImportStatus @default(QUEUED)
-  albumId   String
   total     Int          @default(0)
   completed Int          @default(0)
   failed    Int          @default(0)
@@ -158,11 +172,9 @@ model ImportJob {
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
-  album Album        @relation(fields: [albumId], references: [id], onDelete: Cascade)
   items ImportItem[]
 
   @@index([status, createdAt])
-  @@index([albumId])
 }
 
 model ImportItem {
@@ -201,7 +213,6 @@ model NetdiskPushFailure {
   photoId     String   @unique
   publicId    String
   filename    String
-  albumTitle  String
   // 百度 errno；网络/存储等非百度错误为 null
   errno       Int?
   error       String
@@ -222,7 +233,7 @@ model SiteSetting {
   socialLinks       Json?
   // 每日凌晨自动扫描网盘增量（下行同步）
   netdiskDailyScan  Boolean  @default(true)
-  // 最近一次下行扫描报告（ albumsCreated/importedCount/missing 等）
+  // 最近一次下行扫描报告（ pendingCount/pendingFiles/pathsRefreshed/masterLost 等）
   netdiskScanReport Json?
   // 托管文件登记（直接上传到网盘、不属于照片流程的文件 fsId/path 列表，
   // 下行扫描据此跳过；见 ADR 0004）

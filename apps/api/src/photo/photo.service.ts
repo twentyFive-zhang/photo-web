@@ -27,9 +27,14 @@ import type { GeneratedRendition } from "./photo-processing.service.js";
 import { PhotoProcessingService } from "./photo-processing.service.js";
 
 const photoInclude = {
-  album: { select: { id: true, publicId: true, title: true } },
   renditions: true,
   tags: { include: { tag: true } },
+  memberships: {
+    orderBy: { createdAt: "asc" as const },
+    include: {
+      album: { select: { id: true, publicId: true, title: true } },
+    },
+  },
 } satisfies Prisma.PhotoInclude;
 
 type PhotoWithRelations = Prisma.PhotoGetPayload<{
@@ -46,8 +51,7 @@ function toPhoto(photo: PhotoWithRelations): Photo {
   return {
     id: photo.id,
     publicId: photo.publicId,
-    albumId: photo.albumId,
-    album: photo.album,
+    albums: photo.memberships.map(({ album }) => album),
     title: photo.title,
     caption: photo.caption,
     originalKey: photo.originalKey,
@@ -55,7 +59,7 @@ function toPhoto(photo: PhotoWithRelations): Photo {
     width: photo.width,
     height: photo.height,
     exif: (photo.exif as Photo["exif"]) ?? null,
-    sortOrder: photo.sortOrder,
+    renditions: photo.renditions,
     tags: photo.tags.map(({ tag }) => ({ id: tag.id, name: tag.name })),
     createdAt: photo.createdAt.toISOString(),
     updatedAt: photo.updatedAt.toISOString(),
@@ -83,18 +87,22 @@ export class PhotoService {
     private readonly baiduDownload: BaiduDownloadService,
   ) {}
 
-  /** 本地上传：变体 + 暂存原件落存储，元数据/EXIF 落库；入队网盘上行推送。 */
-  async upload(albumId: string, file: Express.Multer.File): Promise<Photo> {
-    const album = await this.prisma.album.findUnique({
-      where: { id: albumId },
-      select: { id: true },
+  /** 照片库全量列表（挑图弹窗用）：新照片在前。 */
+  async list(): Promise<Photo[]> {
+    const photos = await this.prisma.photo.findMany({
+      orderBy: { createdAt: "desc" },
+      include: photoInclude,
     });
-    if (!album) {
-      throw new NotFoundException("专辑不存在");
-    }
+    return photos.map(toPhoto);
+  }
 
+  /**
+   * 本地上传：变体 + 暂存原件落存储，元数据/EXIF 落库；入队网盘上行推送。
+   * 照片只进照片库，不进任何专辑（ADR 0006 收编两段式；专辑组成在挑图页）。
+   */
+  async upload(file: Express.Multer.File): Promise<Photo> {
     this.processing.assertUploadable(file.mimetype, file.size);
-    const photo = await this.createPhotoFromBuffer(albumId, file.buffer, {
+    const photo = await this.createPhotoFromBuffer(file.buffer, {
       stageOriginal: true,
     });
     await this.netdisk.enqueuePush(photo.id);
@@ -104,7 +112,6 @@ export class PhotoService {
   /**
    * 照片创建核心（本地上传与网盘导入共用）：
    * sha256 去重（重复抛 ConflictException）→ 两档 WebP + EXIF → 落存储 → 事务落库。
-   * 调用方需先完成专辑存在性检查与格式校验。
    *
    * ADR 0005 存储模型：母版唯一权威在网盘源文件库。
    * - stageOriginal=true（本地上传）：原件临时落本地（staging），推送成功后
@@ -113,7 +120,6 @@ export class PhotoService {
    *   staging、不触发推送（originalKey 仅保留扩展名推导用途）。
    */
   async createPhotoFromBuffer(
-    albumId: string,
     buffer: Buffer,
     options: { stageOriginal?: boolean } = {},
   ): Promise<Photo> {
@@ -151,14 +157,9 @@ export class PhotoService {
         );
 
         const created = await this.prisma.$transaction(async (tx) => {
-          const maxSortOrder = await tx.photo.aggregate({
-            where: { albumId },
-            _max: { sortOrder: true },
-          });
           return tx.photo.create({
             data: {
               publicId,
-              albumId,
               originalKey,
               sha256,
               width: original.width,
@@ -167,7 +168,6 @@ export class PhotoService {
               exif: exif
                 ? (exif as unknown as Prisma.InputJsonObject)
                 : undefined,
-              sortOrder: (maxSortOrder._max.sortOrder ?? -1) + 1,
               renditions: {
                 createMany: {
                   data: renditionFiles.map(({ key, rendition }) =>
@@ -268,61 +268,29 @@ export class PhotoService {
     return toPhoto(photo);
   }
 
+  /**
+   * 删除照片 = 移除索引（ADR 0006 删除不变量）：站内记录与本地变体清理，
+   * 网盘文件原地保留——脱离索引后由下行扫描回收到待导入清单，重新导入即恢复。
+   */
   async remove(id: string): Promise<void> {
     const photo = await this.prisma.photo.findUnique({
       where: { id },
       select: {
         originalKey: true,
         renditions: { select: { key: true } },
-        netdiskFsId: true,
-        netdiskPath: true,
       },
     });
     if (!photo) {
       throw new NotFoundException("照片不存在");
     }
-    // 竞态第一道闸：清掉排队中的上行推送任务（照片已删，推上去是孤儿文件）
+    // 竞态第一道闸：清掉排队中的上行推送任务（照片已删，推上去是孤儿文件；
+    // 上传进行中被删的场景由 pushPhoto 的 P2025 兜底，文件回到待导入状态）
     await this.netdisk.removeQueuedPushJobs([id]);
-    // 已镜像照片：网盘文件不删，先登记托管归档再删行（登记失败即报错，
-    // 照片未动可重试；JIANGLIUER-102，站内删除不碰网盘）
-    if (photo.netdiskFsId && photo.netdiskPath) {
-      await this.netdisk.addManagedEntry({
-        fsId: photo.netdiskFsId,
-        path: photo.netdiskPath,
-      });
-    }
     await this.prisma.photo.delete({ where: { id } });
     await this.storage.deleteMany([
       photo.originalKey,
       ...photo.renditions.map((rendition) => rendition.key),
     ]);
-  }
-
-  /** 批量移动 = 换专辑（一张照片只属于一个专辑）；已镜像照片跟随网盘移动。 */
-  async batchMove(photoIds: string[], targetAlbumId: string): Promise<number> {
-    const album = await this.prisma.album.findUnique({
-      where: { id: targetAlbumId },
-      select: { id: true, title: true },
-    });
-    if (!album) {
-      throw new NotFoundException("目标专辑不存在");
-    }
-
-    const result = await this.prisma.photo.updateMany({
-      where: { id: { in: photoIds } },
-      data: { albumId: targetAlbumId },
-    });
-    const mirrored = await this.prisma.photo.findMany({
-      where: { id: { in: photoIds }, netdiskFsId: { not: null } },
-      select: { id: true },
-    });
-    await this.netdisk.enqueueMoves(
-      mirrored.map((photo) => ({
-        photoId: photo.id,
-        destAlbumTitle: album.title,
-      })),
-    );
-    return result.count;
   }
 
   async batchDelete(photoIds: string[]): Promise<number> {
@@ -332,23 +300,10 @@ export class PhotoService {
         id: true,
         originalKey: true,
         renditions: { select: { key: true } },
-        netdiskFsId: true,
-        netdiskPath: true,
       },
     });
-    // 竞态第一道闸：清掉排队中的上行推送任务（照片已删，推上去是孤儿文件）
+    // 竞态第一道闸：清掉排队中的上行推送任务（见 remove 注释）
     await this.netdisk.removeQueuedPushJobs(photos.map((photo) => photo.id));
-    // 已镜像照片：网盘文件不删，先登记托管归档再删行（登记失败即报错，
-    // 照片未动可重试；JIANGLIUER-102，站内删除不碰网盘）
-    const mirrored = photos.filter(
-      (photo) => photo.netdiskFsId && photo.netdiskPath,
-    );
-    for (const photo of mirrored) {
-      await this.netdisk.addManagedEntry({
-        fsId: photo.netdiskFsId ?? "",
-        path: photo.netdiskPath ?? "",
-      });
-    }
     const result = await this.prisma.photo.deleteMany({
       where: { id: { in: photoIds } },
     });

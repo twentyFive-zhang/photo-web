@@ -1,14 +1,20 @@
 export type {
+  AddAlbumPhotosInput,
   Album,
+  AlbumPhoto,
   CreateAlbumInput,
   PhotoSummary,
+  RemoveAlbumPhotosInput,
   ReorderPhotosInput,
   UpdateAlbumInput,
 } from "./album.js";
 export {
+  addAlbumPhotosInputSchema,
+  albumPhotoSchema,
   albumSchema,
   createAlbumInputSchema,
   photoSummarySchema,
+  removeAlbumPhotosInputSchema,
   reorderPhotosInputSchema,
   updateAlbumInputSchema,
 } from "./album.js";
@@ -58,6 +64,7 @@ export type {
   NetdiskDeleteResult,
   NetdiskManagedFiles,
   NetdiskMasterLostPhoto,
+  NetdiskPendingFile,
   NetdiskPushFailure,
   NetdiskRepushInput,
   NetdiskRepushResult,
@@ -77,6 +84,7 @@ export {
   netdiskDeleteResultSchema,
   netdiskManagedFilesSchema,
   netdiskMasterLostPhotoSchema,
+  netdiskPendingFileSchema,
   netdiskPushFailureSchema,
   netdiskRepushInputSchema,
   netdiskRepushResultSchema,
@@ -92,7 +100,6 @@ export {
 } from "./netdisk.js";
 export type {
   BatchDeletePhotosInput,
-  BatchMovePhotosInput,
   ImageFormat,
   Photo,
   PhotoRendition,
@@ -102,7 +109,6 @@ export type {
 } from "./photo.js";
 export {
   batchDeletePhotosInputSchema,
-  batchMovePhotosInputSchema,
   imageFormatSchema,
   photoRenditionSchema,
   photoSchema,

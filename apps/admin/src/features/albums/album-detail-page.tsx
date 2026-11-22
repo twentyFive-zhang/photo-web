@@ -10,7 +10,9 @@ import {
   Crown,
   EyeOff,
   Globe,
+  ImageMinus,
   ImagePlus,
+  Images,
   Pencil,
   QrCode,
   RefreshCcw,
@@ -18,7 +20,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type ChangeEvent, useRef, useState } from "react";
+import { type ChangeEvent, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -35,13 +37,6 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, mediaUrl } from "@/lib/api";
 import {
@@ -52,6 +47,7 @@ import {
 } from "@/lib/shell";
 import { BaiduImportDialog } from "./baidu-import-dialog";
 import { ImportJobBanner } from "./import-job-banner";
+import { PhotoPickerDialog } from "./photo-picker-dialog";
 import { QrDialog } from "./qr-dialog";
 
 const photoEditSchema = z.object({
@@ -84,10 +80,10 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   const [editing, setEditing] = useState<AlbumPhotoRow | null>(null);
   const [showQr, setShowQr] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
   const [viewing, setViewing] = useState<number | null>(null);
-  /** 选中即触发移动后 remount，恢复「移动到…」占位。 */
-  const [moveSelectKey, setMoveSelectKey] = useState(0);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [batchRemoveOpen, setBatchRemoveOpen] = useState(false);
   const [deletePhotoId, setDeletePhotoId] = useState<string | null>(null);
   const [deleteAlbumOpen, setDeleteAlbumOpen] = useState(false);
 
@@ -103,11 +99,6 @@ function AlbumDetail({ albumId }: { albumId: string }) {
     queryFn: () => apiFetch<AlbumPhotoRow[]>(`/admin/albums/${albumId}/photos`),
   });
 
-  const albumsQuery = useQuery({
-    queryKey: ["albums"],
-    queryFn: () => apiFetch<Album[]>("/admin/albums"),
-  });
-
   const featuredIds = useFeaturedIds();
 
   const fail = (err: Error) => {
@@ -115,12 +106,13 @@ function AlbumDetail({ albumId }: { albumId: string }) {
     toast.error(err.message);
   };
 
+  /** 上传到照片库（不进专辑；上传后用「添加照片」挑进专辑）。 */
   const uploadMutation = useMutation({
     mutationFn: async (files: File[]) => {
       for (const file of files) {
         const form = new FormData();
         form.append("file", file);
-        await apiFetch(`/admin/albums/${albumId}/photos/upload`, {
+        await apiFetch("/admin/photos/upload", {
           method: "POST",
           body: form,
         });
@@ -128,28 +120,29 @@ function AlbumDetail({ albumId }: { albumId: string }) {
       return files.length;
     },
     onSuccess: (count) => {
-      toast.success(`已上传 ${count} 张照片`);
+      toast.success(`已上传 ${count} 张到照片库（用「添加照片」挑进本专辑）`);
       invalidate();
     },
     onError: fail,
   });
 
+  /** 删除照片 = 移除索引（网盘文件原地保留，回到待导入状态）。 */
   const deleteMutation = useMutation({
     mutationFn: (photoId: string) =>
       apiFetch<void>(`/admin/photos/${photoId}`, { method: "DELETE" }),
     onSuccess: () => {
-      toast.success("照片已删除，网盘文件保留并归档");
+      toast.success("照片已删除，网盘文件保留原位");
       invalidate();
     },
     onError: fail,
   });
 
-  /** 删除专辑：站内下架（专辑+照片+变体+分享），网盘文件保留并归档。 */
+  /** 删除专辑 = 站内下架（成员关系解除，照片保留在照片库）。 */
   const deleteAlbumMutation = useMutation({
     mutationFn: () =>
       apiFetch<void>(`/admin/albums/${albumId}`, { method: "DELETE" }),
     onSuccess: () => {
-      toast.success("专辑已删除，网盘文件保留并归档");
+      toast.success("专辑已删除，照片保留在照片库");
       invalidate();
       navigate({ to: "/albums" });
     },
@@ -163,21 +156,22 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         body: JSON.stringify({ photoIds }),
       }),
     onSuccess: ({ deleted }) => {
-      toast.success(`已删除 ${deleted} 张照片，网盘文件保留并归档`);
+      toast.success(`已删除 ${deleted} 张照片，网盘文件保留原位`);
       setSelected(new Set());
       invalidate();
     },
     onError: fail,
   });
 
-  const batchMoveMutation = useMutation({
-    mutationFn: (targetAlbumId: string) =>
-      apiFetch<{ moved: number }>("/admin/photos/batch-move", {
+  /** 批量移出专辑：只拆成员关系，照片保留在照片库。 */
+  const batchRemoveMutation = useMutation({
+    mutationFn: (photoIds: string[]) =>
+      apiFetch<void>(`/admin/albums/${albumId}/photos/remove`, {
         method: "POST",
-        body: JSON.stringify({ photoIds: [...selected], targetAlbumId }),
+        body: JSON.stringify({ photoIds }),
       }),
-    onSuccess: ({ moved }) => {
-      toast.success(`已移动 ${moved} 张照片`);
+    onSuccess: () => {
+      toast.success("已移出专辑（照片保留在照片库）");
       setSelected(new Set());
       invalidate();
     },
@@ -239,6 +233,10 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   });
 
   const photos = photosQuery.data ?? [];
+  const memberIds = useMemo(
+    () => new Set(photos.map((photo) => photo.id)),
+    [photos],
+  );
 
   /** 按专辑补推未同步照片（连接网盘前上传或推送失败的存量）。 */
   const pushAlbumMutation = useMutation({
@@ -372,15 +370,24 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         )}
       </div>
 
-      {/* 导入任务进度横幅（网盘导入轮询） */}
-      <ImportJobBanner albumId={albumId} />
+      {/* 最近导入任务进度横幅（导入只入照片库，完成后到这里挑图） */}
+      <ImportJobBanner />
 
-      {/* 上传 + 批量操作工具栏 */}
+      {/* 上传 + 挑图 + 批量操作工具栏 */}
       <div className="flex flex-wrap items-center gap-3">
+        <Button
+          onClick={() => setShowPicker(true)}
+          type="button"
+          variant="default"
+        >
+          <Images size={15} />
+          添加照片
+        </Button>
+
         <Button asChild className="border-dashed" variant="outline">
           <label className="cursor-pointer">
             <ImagePlus size={15} />
-            {uploadMutation.isPending ? "上传中…" : "上传照片"}
+            {uploadMutation.isPending ? "上传中…" : "上传到照片库"}
             <input
               accept="image/jpeg,image/png,image/webp"
               className="hidden"
@@ -418,27 +425,15 @@ function AlbumDetail({ albumId }: { albumId: string }) {
             <span className="text-sm text-neutral-400">
               已选 {selected.size} 张
             </span>
-            <Select
-              disabled={batchMoveMutation.isPending}
-              key={moveSelectKey}
-              onValueChange={(targetAlbumId) => {
-                batchMoveMutation.mutate(targetAlbumId);
-                setMoveSelectKey((current) => current + 1);
-              }}
+            <Button
+              disabled={batchRemoveMutation.isPending}
+              onClick={() => setBatchRemoveOpen(true)}
+              type="button"
+              variant="outline"
             >
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="移动到…" />
-              </SelectTrigger>
-              <SelectContent>
-                {albumsQuery.data
-                  ?.filter((target) => target.id !== albumId)
-                  .map((target) => (
-                    <SelectItem key={target.id} value={target.id}>
-                      {target.title}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+              <ImageMinus size={15} />
+              移出专辑
+            </Button>
             <Button
               disabled={batchDeleteMutation.isPending}
               onClick={() => setBatchDeleteOpen(true)}
@@ -446,7 +441,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
               variant="destructive"
             >
               <Trash2 size={15} />
-              批量删除
+              删除照片
             </Button>
             <Button
               onClick={() => setSelected(new Set())}
@@ -466,7 +461,6 @@ function AlbumDetail({ albumId }: { albumId: string }) {
       )}
 
       <BaiduImportDialog
-        albumId={albumId}
         onImported={() => {
           setShowImport(false);
           invalidate();
@@ -475,21 +469,38 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         open={showImport}
       />
 
+      <PhotoPickerDialog
+        albumId={albumId}
+        memberIds={memberIds}
+        onChanged={invalidate}
+        onOpenChange={setShowPicker}
+        open={showPicker}
+      />
+
       <ConfirmDialog
         danger
         confirmText="删除"
-        description={`将移除选中的 ${selected.size} 张照片的站内记录，网盘文件保留并归档。`}
+        description={`将删除选中的 ${selected.size} 张照片的站内索引，网盘文件原地保留并回到待导入清单。`}
         onConfirm={() => batchDeleteMutation.mutateAsync([...selected])}
         onOpenChange={setBatchDeleteOpen}
         open={batchDeleteOpen}
-        title="批量删除照片"
+        title="删除照片"
+      />
+
+      <ConfirmDialog
+        confirmText="移出"
+        description={`将选中的 ${selected.size} 张照片移出本专辑（只拆成员关系，照片保留在照片库）。`}
+        onConfirm={() => batchRemoveMutation.mutateAsync([...selected])}
+        onOpenChange={setBatchRemoveOpen}
+        open={batchRemoveOpen}
+        title="移出专辑"
       />
 
       {deletePhotoId !== null && (
         <ConfirmDialog
           danger
           confirmText="删除"
-          description="将移除这张照片的站内记录，网盘文件保留并归档。"
+          description="将删除这张照片的站内索引，网盘文件原地保留并回到待导入清单；重新导入即可恢复。"
           onConfirm={() => deleteMutation.mutateAsync(deletePhotoId)}
           onOpenChange={(open) => {
             if (!open) setDeletePhotoId(null);
@@ -503,7 +514,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         <ConfirmDialog
           danger
           confirmText="删除"
-          description={`将移除 ${album.photoCount} 张照片的站内记录，网盘文件保留并归档；专辑与分享链接一并下架，不可恢复。`}
+          description={`专辑与分享链接将一并下架，成员关系解除；${album.photoCount} 张照片保留在照片库，网盘文件不动，不可恢复专辑本身。`}
           onConfirm={() => deleteAlbumMutation.mutateAsync()}
           onOpenChange={setDeleteAlbumOpen}
           open={deleteAlbumOpen}
@@ -536,7 +547,9 @@ function AlbumDetail({ albumId }: { albumId: string }) {
 
       {photosQuery.isPending && <p className="text-neutral-400">加载中…</p>}
       {photos.length === 0 && !photosQuery.isPending && (
-        <p className="text-neutral-500">还没有照片，点上面按钮上传。</p>
+        <p className="text-neutral-500">
+          还没有成员照片，点「添加照片」从照片库挑图。
+        </p>
       )}
 
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
@@ -654,6 +667,17 @@ function AlbumDetail({ albumId }: { albumId: string }) {
                   variant="outline"
                 >
                   <RefreshCcw size={12} />
+                </Button>
+                <Button
+                  aria-label="移出专辑"
+                  className="rounded border border-neutral-600 px-1.5 py-0.5"
+                  disabled={batchRemoveMutation.isPending}
+                  onClick={() => batchRemoveMutation.mutate([photo.id])}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  <ImageMinus size={12} />
                 </Button>
                 <Button
                   aria-label="删除"

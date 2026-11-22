@@ -58,7 +58,7 @@ export function AlbumsPage() {
     mutationFn: (albumId: string) =>
       apiFetch<void>(`/admin/albums/${albumId}`, { method: "DELETE" }),
     onSuccess: () => {
-      toast.success("专辑已删除，网盘文件保留并归档");
+      toast.success("专辑已删除，照片保留在照片库");
       queryClient.invalidateQueries({ queryKey: ["albums"] });
     },
     onError: (err) => {
@@ -159,7 +159,7 @@ export function AlbumsPage() {
           <ConfirmDialog
             danger
             confirmText="删除"
-            description={`将移除 ${deleteTarget.photoCount} 张照片的站内记录，网盘文件保留并归档；专辑与分享链接一并下架，不可恢复。`}
+            description={`专辑与分享链接将一并下架，成员关系解除；${deleteTarget.photoCount} 张照片保留在照片库，网盘文件不动，不可恢复专辑本身。`}
             onConfirm={() => deleteMutation.mutateAsync(deleteTarget.id)}
             onOpenChange={(open) => {
               if (!open) setDeleteTarget(null);

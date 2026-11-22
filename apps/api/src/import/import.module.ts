@@ -2,10 +2,7 @@ import { BullModule } from "@nestjs/bullmq";
 import { Module } from "@nestjs/common";
 import { BaiduModule } from "../baidu/baidu.module.js";
 import { PhotoModule } from "../photo/photo.module.js";
-import {
-  AlbumImportsController,
-  ImportController,
-} from "./import.controller.js";
+import { ImportController } from "./import.controller.js";
 import { ImportProcessor } from "./import.processor.js";
 import { ImportService } from "./import.service.js";
 
@@ -19,7 +16,7 @@ import { ImportService } from "./import.service.js";
     BaiduModule,
     PhotoModule,
   ],
-  controllers: [ImportController, AlbumImportsController],
+  controllers: [ImportController],
   providers: [ImportService, ImportProcessor],
   exports: [ImportService],
 })

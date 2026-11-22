@@ -3,6 +3,7 @@ import {
   OpenApiGeneratorV31,
 } from "@asteasolutions/zod-to-openapi";
 import {
+  addAlbumPhotosInputSchema,
   adminSchema,
   albumSchema,
   apiHealthSchema,
@@ -23,6 +24,7 @@ import {
   publicAlbumSummarySchema,
   publicFeaturedPhotoSchema,
   publicSiteSettingSchema,
+  removeAlbumPhotosInputSchema,
   reorderPhotosInputSchema,
   setFeaturedInputSchema,
   setPhotoTagsInputSchema,
@@ -166,7 +168,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "delete",
     path: "/api/admin/albums/{id}",
-    summary: "删除专辑（级联删除照片）",
+    summary: "删除专辑（站内下架：成员关系级联，照片保留在照片库，网盘零调用）",
     tags: ["albums"],
     security,
     request: { params: z.object({ id: z.string() }) },
@@ -184,7 +186,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "get",
     path: "/api/admin/albums/{id}/photos",
-    summary: "专辑内照片（按排序）",
+    summary: "专辑成员照片（按成员关系 sortOrder 输出）",
     tags: ["albums"],
     security,
     request: { params: z.object({ id: z.string() }) },
@@ -195,8 +197,32 @@ export function buildOpenApiDocument(): OpenApiDocument {
   });
   registry.registerPath({
     method: "post",
+    path: "/api/admin/albums/{id}/photos",
+    summary: "挑图入专辑（追加到末尾；已是成员的照片自动忽略）",
+    tags: ["albums"],
+    security,
+    request: {
+      params: z.object({ id: z.string() }),
+      body: { content: json(addAlbumPhotosInputSchema) },
+    },
+    responses: { ...noContent(), 404: { description: "专辑或照片不存在" } },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/admin/albums/{id}/photos/remove",
+    summary: "移出成员（只拆成员关系，照片保留在照片库）",
+    tags: ["albums"],
+    security,
+    request: {
+      params: z.object({ id: z.string() }),
+      body: { content: json(removeAlbumPhotosInputSchema) },
+    },
+    responses: { ...noContent(), 404: { description: "专辑不存在" } },
+  });
+  registry.registerPath({
+    method: "post",
     path: "/api/admin/albums/{id}/photos/reorder",
-    summary: "重排专辑内照片（传入全部照片 id 的目标顺序）",
+    summary: "重排专辑成员顺序（传入全部成员照片 id 的目标顺序）",
     tags: ["albums"],
     security,
     request: {
@@ -204,30 +230,6 @@ export function buildOpenApiDocument(): OpenApiDocument {
       body: { content: json(reorderPhotosInputSchema) },
     },
     responses: { ...noContent(), 404: { description: "不存在或不属于该专辑" } },
-  });
-
-  registry.registerPath({
-    method: "post",
-    path: "/api/admin/albums/{id}/photos/upload",
-    summary: "本地上传照片到专辑（multipart，字段 file；JPEG/PNG/WebP ≤50MB）",
-    tags: ["albums"],
-    security,
-    request: {
-      params: z.object({ id: z.string() }),
-      body: {
-        content: {
-          "multipart/form-data": {
-            schema: z.object({ file: z.string() }),
-          },
-        },
-      },
-    },
-    responses: {
-      ...ok(photo, "已上传的照片"),
-      404: { description: "专辑不存在" },
-      409: { description: "相同内容的照片已存在" },
-      415: { description: "不支持的文件类型或超过大小上限" },
-    },
   });
 
   // ---------- public（访客） ----------
@@ -278,8 +280,38 @@ export function buildOpenApiDocument(): OpenApiDocument {
   // ---------- photos ----------
   registry.registerPath({
     method: "get",
+    path: "/api/admin/photos",
+    summary: "照片库全量列表（专辑编辑挑图弹窗用，新照片在前）",
+    tags: ["photos"],
+    security,
+    responses: ok(z.array(photo), "照片列表"),
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/admin/photos/upload",
+    summary:
+      "本地上传照片到照片库（multipart，字段 file；JPEG/PNG/WebP ≤50MB；不进任何专辑）",
+    tags: ["photos"],
+    security,
+    request: {
+      body: {
+        content: {
+          "multipart/form-data": {
+            schema: z.object({ file: z.string() }),
+          },
+        },
+      },
+    },
+    responses: {
+      ...ok(photo, "已上传的照片"),
+      409: { description: "相同内容的照片已存在" },
+      415: { description: "不支持的文件类型或超过大小上限" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/api/admin/photos/{id}",
-    summary: "照片详情（含 renditions 与标签）",
+    summary: "照片详情（含 renditions、标签与所属专辑）",
     tags: ["photos"],
     security,
     request: { params: z.object({ id: z.string() }) },
@@ -300,7 +332,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "delete",
     path: "/api/admin/photos/{id}",
-    summary: "删除照片",
+    summary: "删除照片（移除索引；网盘文件原地保留并回到待导入状态）",
     tags: ["photos"],
     security,
     request: { params: z.object({ id: z.string() }) },
@@ -320,26 +352,8 @@ export function buildOpenApiDocument(): OpenApiDocument {
   });
   registry.registerPath({
     method: "post",
-    path: "/api/admin/photos/batch-move",
-    summary: "批量移动照片到目标专辑",
-    tags: ["photos"],
-    security,
-    request: {
-      body: {
-        content: json(
-          z.object({
-            photoIds: z.array(z.string()),
-            targetAlbumId: z.string(),
-          }),
-        ),
-      },
-    },
-    responses: ok(z.object({ moved: z.number() }), "移动数量"),
-  });
-  registry.registerPath({
-    method: "post",
     path: "/api/admin/photos/batch-delete",
-    summary: "批量删除照片",
+    summary: "批量删除照片（移除索引；网盘文件原地保留）",
     tags: ["photos"],
     security,
     request: {
@@ -484,7 +498,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     method: "post",
     path: "/api/admin/imports/baidu",
     summary:
-      "创建网盘导入任务（文件夹同步展开，图片过滤，单任务 ≤500 张；文件夹展开超过上限报错）",
+      "创建网盘导入任务（文件夹同步展开，图片过滤，单任务 ≤500 张；只登记为照片，不进专辑）",
     tags: ["import"],
     security,
     request: { body: { content: json(createBaiduImportInputSchema) } },
@@ -492,6 +506,15 @@ export function buildOpenApiDocument(): OpenApiDocument {
       ...ok(importJob, "已创建的导入任务"),
       400: { description: "无可导入图片或超上限" },
     },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/admin/imports",
+    summary: "最近的导入任务（进度横幅轮询用）",
+    tags: ["import"],
+    security,
+    request: { query: z.object({ take: z.string().optional() }) },
+    responses: ok(z.array(importJob), "任务列表"),
   });
   registry.registerPath({
     method: "get",
@@ -515,15 +538,6 @@ export function buildOpenApiDocument(): OpenApiDocument {
       404: { description: "不存在" },
     },
   });
-  registry.registerPath({
-    method: "get",
-    path: "/api/admin/albums/{albumId}/imports",
-    summary: "专辑最近导入任务（进度横幅轮询用）",
-    tags: ["import"],
-    security,
-    request: { params: z.object({ albumId: z.string() }) },
-    responses: ok(z.array(importJob), "任务列表"),
-  });
 
   // ---------- netdisk（M5.5 双向同步） ----------
   const netdiskStatus = netdiskStatusSchema.meta({ id: "NetdiskStatus" });
@@ -546,7 +560,8 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "post",
     path: "/api/admin/netdisk/scan",
-    summary: "手动触发下行扫描（新文件夹自动建专辑并导入，缺失仅报告）",
+    summary:
+      "手动触发下行扫描（发现待导入文件 + 按 fsId 刷新路径缓存 + 母本丢失告警；不建专辑不自动导入）",
     tags: ["netdisk"],
     security,
     responses: {
@@ -571,7 +586,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "post",
     path: "/api/admin/netdisk/albums/{albumId}/push",
-    summary: "按专辑补推：该专辑未同步照片入队上行",
+    summary: "按专辑补推：该专辑成员中未同步的照片入队上行",
     tags: ["netdisk"],
     security,
     request: { params: z.object({ albumId: z.string() }) },
@@ -583,8 +598,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "get",
     path: "/api/admin/netdisk/managed",
-    summary:
-      "托管归档清单：直接上传 + 站内删除自动归档的网盘文件登记（扫描跳过依据）",
+    summary: "托管文件清单（ADR 0004 直接上传通道的登记，扫描跳过依据）",
     tags: ["netdisk"],
     security,
     responses: {
@@ -594,7 +608,8 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "post",
     path: "/api/admin/netdisk/managed/unmanage",
-    summary: "解除托管：按网盘路径移除登记，下轮扫描按目录重新导入（恢复）",
+    summary:
+      "解除托管：按网盘路径移除登记，文件回到待导入状态（可再导入为照片）",
     tags: ["netdisk"],
     security,
     request: {

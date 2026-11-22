@@ -9,17 +9,16 @@ import { apiFetch } from "@/lib/api";
 const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
 
 /**
- * 专辑最近导入任务的进度横幅：活跃任务每 2s 轮询，
- * 终态停止并刷新照片列表（导入完成 = 专辑新增照片）。
+ * 最近导入任务进度横幅（全局视角，ADR 0006：导入只产照片不进专辑）：
+ * 活跃任务每 2s 轮询，终态停止并提示到专辑编辑页挑图。
  */
-export function ImportJobBanner({ albumId }: { albumId: string }) {
+export function ImportJobBanner() {
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
 
   const jobsQuery = useQuery({
-    queryKey: ["album-imports", albumId],
-    queryFn: () =>
-      apiFetch<ImportJob[]>(`/admin/albums/${albumId}/imports?take=5`),
+    queryKey: ["import-jobs"],
+    queryFn: () => apiFetch<ImportJob[]>("/admin/imports?take=5"),
     refetchInterval: (query) => {
       const jobs = query.state.data ?? [];
       return jobs.some((job) => ACTIVE_STATUSES.has(job.status)) ? 2000 : false;
@@ -31,9 +30,7 @@ export function ImportJobBanner({ albumId }: { albumId: string }) {
       apiFetch<ImportJob>(`/admin/imports/${jobId}/retry`, { method: "POST" }),
     onSuccess: () => {
       toast.success("失败项已重新排队");
-      queryClient.invalidateQueries({
-        queryKey: ["album-imports", albumId],
-      });
+      queryClient.invalidateQueries({ queryKey: ["import-jobs"] });
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -52,14 +49,6 @@ export function ImportJobBanner({ albumId }: { albumId: string }) {
     const timer = setTimeout(() => setDismissed(true), 3000);
     return () => clearTimeout(timer);
   }, [job?.status]);
-
-  // 任务到达终态时刷新专辑照片（新导入的照片出现在列表里）
-  const status = job?.status;
-  useEffect(() => {
-    if (status && !ACTIVE_STATUSES.has(status) && status !== "QUEUED") {
-      queryClient.invalidateQueries({ queryKey: ["album-photos", albumId] });
-    }
-  }, [albumId, queryClient, status]);
 
   if (jobsQuery.isPending || !job || dismissed) {
     return null;
@@ -89,6 +78,11 @@ export function ImportJobBanner({ albumId }: { albumId: string }) {
             {done}/{job.total}
             {job.skipped > 0 && `（跳过重复 ${job.skipped}）`}
           </span>
+          {job.status === "SUCCEEDED" && (
+            <span className="text-neutral-500">
+              照片已入照片库，用「添加照片」挑进专辑
+            </span>
+          )}
         </div>
         {failedItems.length > 0 && (
           <div className="flex items-center gap-2">
