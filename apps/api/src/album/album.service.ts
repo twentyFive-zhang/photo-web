@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import type {
   AddAlbumPhotosInput,
   Album,
@@ -88,6 +92,17 @@ async function requireAlbum(
     throw new NotFoundException("专辑不存在");
   }
   return album;
+}
+
+/**
+ * 事务内锁专辑行：并发排序写操作（addPhotos / reorderPhotos）在此串行化，
+ * max(sortOrder) 的「读-算-写」不再互相竞争，避免产生并列 sortOrder。
+ */
+async function lockAlbumRow(
+  tx: Prisma.TransactionClient,
+  albumId: string,
+): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM "Album" WHERE id = ${albumId} FOR UPDATE`;
 }
 
 @Injectable()
@@ -261,7 +276,10 @@ export class AlbumService {
     }));
   }
 
-  /** 加入成员（追加到专辑末尾）；已是成员的照片自动忽略。 */
+  /**
+   * 加入成员（追加到专辑末尾）；已是成员的照片自动忽略。
+   * max(sortOrder) 在锁住专辑行的事务内读取，并发添加不会产生并列 sortOrder。
+   */
   async addPhotos(albumId: string, input: AddAlbumPhotosInput): Promise<void> {
     await requireAlbum(this.prisma, albumId);
 
@@ -273,21 +291,21 @@ export class AlbumService {
       throw new NotFoundException("存在不存在的照片");
     }
 
-    const maxRow = await this.prisma.albumPhoto.aggregate({
-      where: { albumId },
-      _max: { sortOrder: true },
-    });
-    let next = (maxRow._max.sortOrder ?? -1) + 1;
-
-    await this.prisma.$transaction(
-      input.photoIds.map((photoId) =>
-        this.prisma.albumPhoto.upsert({
+    await this.prisma.$transaction(async (tx) => {
+      await lockAlbumRow(tx, albumId);
+      const maxRow = await tx.albumPhoto.aggregate({
+        where: { albumId },
+        _max: { sortOrder: true },
+      });
+      let next = (maxRow._max.sortOrder ?? -1) + 1;
+      for (const photoId of input.photoIds) {
+        await tx.albumPhoto.upsert({
           where: { albumId_photoId: { albumId, photoId } },
           update: {},
           create: { albumId, photoId, sortOrder: next++ },
-        }),
-      ),
-    );
+        });
+      }
+    });
   }
 
   /** 移出成员：只拆成员关系，照片本身保留在照片库。 */
@@ -301,7 +319,10 @@ export class AlbumService {
     });
   }
 
-  /** 按传入顺序重写成员关系 sortOrder（要求传入该专辑全部成员照片 id）。 */
+  /**
+   * 按传入顺序重写成员关系 sortOrder（要求传入该专辑全部成员照片 id——
+   * 部分传入会与未传成员并列排序，直接拒绝）。写前锁专辑行，与并发添加互斥。
+   */
   async reorderPhotos(
     albumId: string,
     input: ReorderPhotosInput,
@@ -320,15 +341,24 @@ export class AlbumService {
     if (members.length !== input.photoIds.length) {
       throw new NotFoundException("存在不属于该专辑的照片");
     }
+    const memberCount = await this.prisma.albumPhoto.count({
+      where: { albumId },
+    });
+    if (input.photoIds.length !== memberCount) {
+      throw new BadRequestException(
+        "photoIds 必须包含该专辑全部成员照片（不支持部分重排）",
+      );
+    }
 
-    await this.prisma.$transaction(
-      input.photoIds.map((photoId, index) =>
-        this.prisma.albumPhoto.update({
+    await this.prisma.$transaction(async (tx) => {
+      await lockAlbumRow(tx, albumId);
+      for (const [index, photoId] of input.photoIds.entries()) {
+        await tx.albumPhoto.update({
           where: { albumId_photoId: { albumId, photoId } },
           data: { sortOrder: index },
-        }),
-      ),
-    );
+        });
+      }
+    });
   }
 
   // ---- 公开视图（无需登录） ----
