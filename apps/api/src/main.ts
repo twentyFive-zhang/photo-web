@@ -48,7 +48,8 @@ async function bootstrap() {
       saveUninitialized: false,
       cookie: {
         httpOnly: true,
-        secure: nodeEnv === "production",
+        // HTTPS 后带 Secure、备案前 IP 预览 HTTP 不带（express-session 按实际连接判断）
+        secure: "auto",
         sameSite: "lax",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       },
