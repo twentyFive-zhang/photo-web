@@ -52,6 +52,11 @@ export {
   importJobStatusSchema,
 } from "./import.js";
 export type {
+  NetdiskCreateFolderInput,
+  NetdiskCreateFolderResult,
+  NetdiskDeleteInput,
+  NetdiskDeleteResult,
+  NetdiskManagedFiles,
   NetdiskMissingPhoto,
   NetdiskPendingDelete,
   NetdiskPushFailure,
@@ -60,8 +65,16 @@ export type {
   NetdiskScanReport,
   NetdiskScanTriggered,
   NetdiskStatus,
+  NetdiskUploadAccepted,
+  NetdiskUploadTask,
+  NetdiskUploadTasks,
 } from "./netdisk.js";
 export {
+  netdiskCreateFolderInputSchema,
+  netdiskCreateFolderResultSchema,
+  netdiskDeleteInputSchema,
+  netdiskDeleteResultSchema,
+  netdiskManagedFilesSchema,
   netdiskMissingPhotoSchema,
   netdiskPendingDeleteSchema,
   netdiskPushFailureSchema,
@@ -70,6 +83,9 @@ export {
   netdiskScanReportSchema,
   netdiskScanTriggeredSchema,
   netdiskStatusSchema,
+  netdiskUploadAcceptedSchema,
+  netdiskUploadTaskSchema,
+  netdiskUploadTasksSchema,
   sanitizeNetdiskName,
 } from "./netdisk.js";
 export type {

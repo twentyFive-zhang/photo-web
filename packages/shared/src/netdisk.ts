@@ -86,3 +86,82 @@ export const netdiskRepushResultSchema = z.object({
   queued: z.number(),
 });
 export type NetdiskRepushResult = z.infer<typeof netdiskRepushResultSchema>;
+
+// ---------- 网盘直接管理（新建/删除/直接上传，JIANGLIUER-94） ----------
+
+/** 新建文件夹输入：dir 为父目录（空串 = 应用根），name 为新文件夹名。 */
+export const netdiskCreateFolderInputSchema = z.object({
+  dir: z.string().default(""),
+  name: z.string().min(1, "文件夹名称不能为空").max(100, "文件夹名称过长"),
+});
+export type NetdiskCreateFolderInput = z.infer<
+  typeof netdiskCreateFolderInputSchema
+>;
+
+export const netdiskCreateFolderResultSchema = z.object({
+  path: z.string(),
+});
+export type NetdiskCreateFolderResult = z.infer<
+  typeof netdiskCreateFolderResultSchema
+>;
+
+/**
+ * 删除输入：单删/批删/文件夹级联共用一个路径数组。
+ * 文件夹传目录路径本身（网盘侧递归删除，进回收站）。
+ */
+export const netdiskDeleteInputSchema = z.object({
+  paths: z
+    .array(z.string().min(1, "路径不能为空"))
+    .min(1, "至少选择一个要删除的条目")
+    .max(500, "单次最多删除 500 项"),
+});
+export type NetdiskDeleteInput = z.infer<typeof netdiskDeleteInputSchema>;
+
+export const netdiskDeleteResultSchema = z.object({
+  /** 受理删除的路径数（百度 filemanager 为异步受理）。 */
+  deleted: z.number(),
+  /** 级联清除镜像映射（netdiskFsId/netdiskPath）的照片数。 */
+  clearedPhotos: z.number(),
+});
+export type NetdiskDeleteResult = z.infer<typeof netdiskDeleteResultSchema>;
+
+/** 直接上传的后台任务视图（BullMQ 任务状态，不入库）。 */
+export const netdiskUploadTaskSchema = z.object({
+  id: z.string(),
+  filename: z.string(),
+  destPath: z.string(),
+  size: z.number(),
+  state: z.enum(["waiting", "active", "completed", "failed"]),
+  /** 0-100 分片上传进度（waiting/completed/failed 恒为 0）。 */
+  progress: z.number(),
+  error: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type NetdiskUploadTask = z.infer<typeof netdiskUploadTaskSchema>;
+
+export const netdiskUploadTasksSchema = z.object({
+  tasks: z.array(netdiskUploadTaskSchema),
+});
+export type NetdiskUploadTasks = z.infer<typeof netdiskUploadTasksSchema>;
+
+/** 直接上传受理响应：taskId 用于在任务列表中对照。 */
+export const netdiskUploadAcceptedSchema = z.object({
+  taskId: z.string(),
+});
+export type NetdiskUploadAccepted = z.infer<typeof netdiskUploadAcceptedSchema>;
+
+/**
+ * 托管文件登记（持久化在 SiteSetting.netdiskManagedFiles JSON 列）。
+ * 下行扫描据此跳过托管文件（不入 Photo 表、不进相册）；
+ * scannedAt 由扫描用 seen 集合自愈修剪，uploadedAt 便于人工排查。
+ */
+export const netdiskManagedFilesSchema = z.object({
+  entries: z.array(
+    z.object({
+      fsId: z.string(),
+      path: z.string(),
+      uploadedAt: z.string(),
+    }),
+  ),
+});
+export type NetdiskManagedFiles = z.infer<typeof netdiskManagedFilesSchema>;

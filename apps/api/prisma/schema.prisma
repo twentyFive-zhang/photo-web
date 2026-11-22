@@ -236,6 +236,9 @@ model SiteSetting {
   netdiskDailyScan  Boolean  @default(true)
   // 最近一次下行扫描报告（ albumsCreated/importedCount/missing 等）
   netdiskScanReport Json?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  // 托管文件登记（直接上传到网盘、不属于照片流程的文件 fsId/path 列表，
+  // 下行扫描据此跳过；见 ADR 0004）
+  netdiskManagedFiles Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
