@@ -85,9 +85,10 @@ const MAX_PUSH_ALL = 2000;
 type PushAllState = { queued: number; done: number; failed: number };
 
 /**
- * 网盘镜像同步编排：
- * - 上行：push（单张）/ pushAll（存量回填），三阶段上传后回写 netdiskFsId/netdiskPath
- * - 下行：scan（增量导入 + 缺失报告）
+ * 网盘镜像同步编排（ADR 0005：网盘 = 母版唯一权威存储）：
+ * - 上行：push（单张）/ pushAll（存量回填），三阶段上传成功后回写映射并
+ *   删除本地暂存原件（变体保留）；失败自动重试，成功前原件一直在本地
+ * - 下行：scan（增量导入 + 母本丢失告警）
  * - 传播：move / renameAlbum（删除不自动传播，见 ADR 0002）
  */
 @Injectable()
@@ -458,8 +459,10 @@ export class NetdiskSyncService implements OnModuleInit {
   }
 
   /**
-   * 缺失/推送失败重推：清掉旧映射与失败记录后复用既有 push 管线
+   * 推送失败照片重推：清掉旧映射与失败记录后复用既有 push 管线
    * （jobId 与单张推送相同，天然去重；推送成功后 netdiskFsId 重新回写）。
+   * 仅适用于推送失败的照片——其暂存原件仍在本地，可重试；网盘侧母本丢失
+   * 的照片本地无原件，不可重推（设置页只告警，ADR 0005）。
    * 入队前先清理停在 failed 集合的旧任务（见 removeFailedPushJobs）。
    * 返回实际入队数量。
    */
@@ -622,7 +625,7 @@ export class NetdiskSyncService implements OnModuleInit {
       scannedAt: new Date().toISOString(),
       albumsCreated: [],
       importedCount: 0,
-      missing: [],
+      masterLost: [],
       error: null,
     });
     await this.queue.add(
@@ -698,7 +701,8 @@ export class NetdiskSyncService implements OnModuleInit {
 
   /**
    * 上行推送单张照片（push 任务的执行体）：
-   * 读原件 → 整体/首片/分片 MD5 → precreate → 4MB 分片 superfile2 → create → 回写映射。
+   * 读暂存原件 → 整体/首片/分片 MD5 → precreate → 4MB 分片 superfile2 →
+   * create → 回写映射 → 删除本地暂存原件（仅原件，变体保留）。
    * 已同步（netdiskFsId 已设）直接跳过——网盘导入回写与推送入队有竞态，这里兜底
    * （文件确实在网盘上，残留的失败记录一并清除）。
    */
@@ -717,6 +721,9 @@ export class NetdiskSyncService implements OnModuleInit {
     if (!photo || photo.netdiskFsId) {
       if (photo) {
         await this.clearPushFailures([photoId]);
+        // 已镜像照片本地不应再有原件（权威在网盘，ADR 0005）：
+        // 兜底清理残留的暂存原件（导入的照片该文件本就不存在，删除为空操作）
+        await this.deleteStagedOriginal(photo.originalKey, photo.publicId);
       }
       // 无需再推也计入全量推送进度，否则 done+failed 追不上 queued、收尾不触发
       // （照片入队后被网盘导入或单张推送抢先同步时走这里）。
@@ -783,10 +790,31 @@ export class NetdiskSyncService implements OnModuleInit {
       data: { netdiskFsId: String(fsId), netdiskPath: path },
     });
     await this.clearPushFailures([photoId]);
+    // 首推成功即删本地暂存原件（仅原件，变体保留）——母版权威自此在网盘。
+    // 若此时崩溃，重试会走上方已同步分支兜底清理。
+    await this.deleteStagedOriginal(photo.originalKey, photo.publicId);
     if (this.pushAllState) {
       this.pushAllState.done += 1;
     }
-    this.logger.log(`照片已推送网盘：${path}`);
+    this.logger.log(`照片已推送网盘，本地暂存原件已清理：${path}`);
+  }
+
+  /**
+   * 删除本地暂存原件（best-effort）：文件不存在忽略；其他删除失败只记日志
+   * 不让推送报错——网盘上已有权威副本，本地残留可由全量推送/迁移命令再清理。
+   */
+  private async deleteStagedOriginal(
+    originalKey: string,
+    publicId: string,
+  ): Promise<void> {
+    try {
+      await this.storage.deleteIfExists(originalKey);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `暂存原件删除失败（忽略，网盘已有权威副本）：photos/${publicId}/ → ${message}`,
+      );
+    }
   }
 
   /** push 任务结束时统计全量推送进度（单张推送时无副作用）。 */

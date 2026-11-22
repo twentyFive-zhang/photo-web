@@ -37,6 +37,21 @@ export class StorageService {
     return readFile(join(this.root, key));
   }
 
+  /**
+   * 删除单个文件：不存在时忽略；其他错误抛出，由调用方决定是否记日志
+   * （暂存原件推送成功后的删除属 best-effort，失败只记日志，ADR 0005）。
+   */
+  async deleteIfExists(key: string): Promise<void> {
+    const target = join(this.root, key);
+    try {
+      await unlink(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+
   /** 尽力删除：文件不存在时忽略；删除后若父目录为空则一并移除。 */
   async deleteMany(keys: string[]): Promise<void> {
     const dirs = new Set<string>();

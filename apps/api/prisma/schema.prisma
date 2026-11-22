@@ -12,10 +12,10 @@ enum Visibility {
   UNLISTED
 }
 
+// 两档展示变体（ADR 0005）：large(2560) 档已移除，展示上限为 display(1600)
 enum PhotoVariant {
   THUMB
   DISPLAY
-  LARGE
 }
 
 enum ImageFormat {

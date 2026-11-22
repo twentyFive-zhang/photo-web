@@ -108,8 +108,8 @@ export function PhotoGallery({
               <ChevronLeft size={16} />
             </button>
             {(() => {
-              const large = renditionUrl(selected, "LARGE");
-              return large ? (
+              const display = renditionUrl(selected, "DISPLAY");
+              return display ? (
                 // biome-ignore lint/a11y/noStaticElementInteractions: 点击大图不关闭灯箱（阻止冒泡），关闭有按钮与 Esc
                 // biome-ignore lint/performance/noImgElement: 图 URL 来自 API rendition（本地 /media），不走 next/image 优化
                 <img
@@ -117,7 +117,7 @@ export function PhotoGallery({
                   className="max-h-full max-w-full object-contain"
                   onClick={(event) => event.stopPropagation()}
                   role="presentation"
-                  src={large}
+                  src={display}
                 />
               ) : null;
             })()}

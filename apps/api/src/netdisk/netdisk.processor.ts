@@ -6,7 +6,7 @@ import {
   WorkerHost,
 } from "@nestjs/bullmq";
 import { Logger } from "@nestjs/common";
-import type { NetdiskMissingPhoto } from "@photo/shared";
+import type { NetdiskMasterLostPhoto } from "@photo/shared";
 import type { Job, Queue } from "bullmq";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { BaiduApiError, BaiduApiService } from "../baidu/baidu-api.service.js";
@@ -182,7 +182,7 @@ export class NetdiskProcessor extends WorkerHost {
         scannedAt: new Date().toISOString(),
         albumsCreated: [],
         importedCount: 0,
-        missing: [],
+        masterLost: [],
         error: message,
       });
     }
@@ -195,7 +195,7 @@ export class NetdiskProcessor extends WorkerHost {
       scannedAt: new Date().toISOString(),
       albumsCreated: [],
       importedCount: 0,
-      missing: [],
+      masterLost: [],
       error: null,
     });
 
@@ -285,7 +285,8 @@ export class NetdiskProcessor extends WorkerHost {
       }
     }
 
-    // 网盘侧缺失：站内已镜像的 fsid 本次未出现 → 仅报告，不动站内数据
+    // 母本丢失告警（ADR 0005）：站内已镜像的 fsid 本次未出现在网盘 →
+    // 本地按「首推成功即删」也无原件，母版唯一权威副本丢失，仅告警不可自动修复
     const mirrored = await this.prisma.photo.findMany({
       where: { netdiskFsId: { not: null } },
       select: {
@@ -296,7 +297,7 @@ export class NetdiskProcessor extends WorkerHost {
         album: { select: { title: true } },
       },
     });
-    const missing: NetdiskMissingPhoto[] = mirrored
+    const masterLost: NetdiskMasterLostPhoto[] = mirrored
       .filter((photo) => !seen.has(photo.netdiskFsId ?? ""))
       .map((photo) => ({
         photoId: photo.id,
@@ -310,11 +311,11 @@ export class NetdiskProcessor extends WorkerHost {
       scannedAt: new Date().toISOString(),
       albumsCreated,
       importedCount,
-      missing,
+      masterLost,
       error: null,
     });
     this.logger.log(
-      `网盘扫描完成：导入 ${importedCount} 张，新建专辑 ${albumsCreated.length} 个，缺失 ${missing.length} 张`,
+      `网盘扫描完成：导入 ${importedCount} 张，新建专辑 ${albumsCreated.length} 个，母本丢失 ${masterLost.length} 张`,
     );
   }
 

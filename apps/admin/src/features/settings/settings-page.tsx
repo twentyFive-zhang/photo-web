@@ -184,10 +184,10 @@ function NetdiskSection({
     onError: (err) => toast.error(err.message),
   });
 
-  /** 缺失/推送失败重推（清旧映射后复用既有 push 管线）。 */
+  /** 推送失败照片重推（暂存原件仍在本地，可重试；母本丢失不可重推）。 */
   const repushMutation = useMutation({
     mutationFn: (photoIds: string[]) =>
-      apiFetch<{ queued: number }>("/admin/netdisk/missing/repush", {
+      apiFetch<{ queued: number }>("/admin/netdisk/push-failures/repush", {
         method: "POST",
         body: JSON.stringify({ photoIds }),
       }),
@@ -252,7 +252,6 @@ function NetdiskSection({
 
   const [pushAllOpen, setPushAllOpen] = useState(false);
   const [disconnectOpen, setDisconnectOpen] = useState(false);
-  const [repushAllOpen, setRepushAllOpen] = useState(false);
   const [deleteFileTarget, setDeleteFileTarget] = useState<{
     id: string;
     filename: string;
@@ -335,48 +334,33 @@ function NetdiskSection({
                   上次扫描（{new Date(report.scannedAt).toLocaleString()}）：
                   {report.status === "FAILED"
                     ? `失败 — ${report.error}`
-                    : `导入 ${report.importedCount} 张，新建专辑 ${report.albumsCreated.length} 个，缺失 ${report.missing.length} 张`}
+                    : `导入 ${report.importedCount} 张，新建专辑 ${report.albumsCreated.length} 个，母本丢失 ${report.masterLost.length} 张`}
                 </p>
                 {report.albumsCreated.length > 0 && (
                   <p className="mt-1 text-neutral-500">
                     新专辑：{report.albumsCreated.join("、")}
                   </p>
                 )}
-                {report.missing.length > 0 && (
-                  <div className="mt-2 space-y-1.5">
-                    <p className="text-amber-400">
-                      网盘侧缺失（已被手动删除，站内照片未动），可重推恢复镜像：
+                {report.masterLost.length > 0 && (
+                  <div className="mt-2 space-y-1.5 rounded-lg border border-red-900/60 bg-red-950/30 p-3">
+                    <p className="font-medium text-red-400">
+                      母本丢失（{report.masterLost.length}
+                      ）—
+                      网盘侧副本已被删除，本地也不再保存原件（母版唯一权威在网盘），无法自动恢复：
                     </p>
-                    {report.missing.map((photo) => (
+                    <p className="text-neutral-500">
+                      请人工检查网盘回收站，或确认后删除站内照片并重新上传母本。
+                    </p>
+                    {report.masterLost.map((photo) => (
                       <div
-                        className="flex flex-wrap items-center gap-2 text-sm text-neutral-400"
+                        className="flex flex-wrap items-center gap-2 text-sm text-red-300/90"
                         key={photo.photoId}
                       >
-                        <span className="flex-1 truncate">
+                        <span className="truncate">
                           {photo.filename}（{photo.albumTitle}）
                         </span>
-                        <Button
-                          disabled={repushMutation.isPending}
-                          onClick={() => repushMutation.mutate([photo.photoId])}
-                          size="sm"
-                          type="button"
-                          variant="outline"
-                        >
-                          <RotateCcw size={13} />
-                          重推
-                        </Button>
                       </div>
                     ))}
-                    <Button
-                      disabled={repushMutation.isPending}
-                      onClick={() => setRepushAllOpen(true)}
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                    >
-                      <RotateCcw size={13} />
-                      全部重推（{report.missing.length}）
-                    </Button>
                   </div>
                 )}
               </div>
@@ -478,18 +462,6 @@ function NetdiskSection({
         onOpenChange={setDisconnectOpen}
         open={disconnectOpen}
         title="断开网盘连接"
-      />
-      <ConfirmDialog
-        confirmText="重推"
-        description={`把缺失的 ${report ? report.missing.length : 0} 张照片重新推送到网盘？`}
-        onConfirm={() =>
-          repushMutation.mutateAsync(
-            report ? report.missing.map((photo) => photo.photoId) : [],
-          )
-        }
-        onOpenChange={setRepushAllOpen}
-        open={repushAllOpen}
-        title="全部重推"
       />
       {deleteFileTarget !== null && (
         <ConfirmDialog

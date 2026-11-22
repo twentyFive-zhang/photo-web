@@ -14,11 +14,10 @@ const ORIGINAL_EXT: Record<string, string> = {
   "image/webp": "webp",
 };
 
-/** 三档展示图宽度（等比缩放，不放大）。 */
+/** 展示变体宽度（ADR 0005：本地只存两档，母版权威在网盘源文件库）。 */
 const RENDITION_WIDTHS: Record<PhotoVariant, number> = {
   THUMB: 400,
   DISPLAY: 1600,
-  LARGE: 2560,
 };
 
 export interface OriginalImage {
@@ -97,10 +96,10 @@ export class PhotoProcessingService {
     };
   }
 
-  /** 生成三档 WebP；rotate() 按 EXIF 方向自动转正。 */
+  /** 生成两档 WebP（thumb/display）；rotate() 按 EXIF 方向自动转正。 */
   async generateRenditions(buffer: Buffer): Promise<GeneratedRendition[]> {
     const base = sharp(buffer, { failOn: "error" }).rotate();
-    const variants: PhotoVariant[] = ["THUMB", "DISPLAY", "LARGE"];
+    const variants: PhotoVariant[] = ["THUMB", "DISPLAY"];
     return Promise.all(
       variants.map(async (variant) => {
         const { data, info } = await base

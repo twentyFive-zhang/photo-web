@@ -1,8 +1,9 @@
 # photo-web 项目上下文
 
-> 最后更新：2026-10-28
+> 最后更新：2026-11-22
 > 基线提交：`e1324a2 chore: scaffold photo-web monorepo`
 > 当前阶段：M1-M4 完成；M4 后体验增强（二维码/手机端/UX）完成；准备进入 M5
+> **2026-11-22 存储模型修订**：网盘为母版唯一权威存储、本地只存 thumb(400)+display(1600) 两档变体（large 档移除），见 [ADR 0005](./adr/0005-netdisk-as-authoritative-master-store.md)；下文涉及「原件落发布库 / 三档展示图」的旧描述以该 ADR 为准。
 
 ## 1. 项目目标
 

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -12,6 +13,8 @@ import type {
 } from "@photo/shared";
 import { normalizeTagNames } from "@photo/shared";
 import { Prisma } from "@prisma/client";
+// biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
+import { BaiduDownloadService } from "../baidu/baidu-download.service.js";
 import { generatePublicId } from "../common/id.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { NetdiskSyncService } from "../netdisk/netdisk-sync.service.js";
@@ -77,9 +80,10 @@ export class PhotoService {
     private readonly storage: StorageService,
     private readonly processing: PhotoProcessingService,
     private readonly netdisk: NetdiskSyncService,
+    private readonly baiduDownload: BaiduDownloadService,
   ) {}
 
-  /** 本地上传：原件 + 三档 WebP 落存储，元数据/EXIF 落库；入队网盘上行推送。 */
+  /** 本地上传：变体 + 暂存原件落存储，元数据/EXIF 落库；入队网盘上行推送。 */
   async upload(albumId: string, file: Express.Multer.File): Promise<Photo> {
     const album = await this.prisma.album.findUnique({
       where: { id: albumId },
@@ -90,17 +94,29 @@ export class PhotoService {
     }
 
     this.processing.assertUploadable(file.mimetype, file.size);
-    const photo = await this.createPhotoFromBuffer(albumId, file.buffer);
+    const photo = await this.createPhotoFromBuffer(albumId, file.buffer, {
+      stageOriginal: true,
+    });
     await this.netdisk.enqueuePush(photo.id);
     return photo;
   }
 
   /**
    * 照片创建核心（本地上传与网盘导入共用）：
-   * sha256 去重（重复抛 ConflictException）→ 三档 WebP + EXIF → 落存储 → 事务落库。
+   * sha256 去重（重复抛 ConflictException）→ 两档 WebP + EXIF → 落存储 → 事务落库。
    * 调用方需先完成专辑存在性检查与格式校验。
+   *
+   * ADR 0005 存储模型：母版唯一权威在网盘源文件库。
+   * - stageOriginal=true（本地上传）：原件临时落本地（staging），推送成功后
+   *   由 push 流程删除；推送成功前任何时刻照片都有母本。
+   * - stageOriginal=false（网盘导入）：原件本就在网盘，不落本地、不入
+   *   staging、不触发推送（originalKey 仅保留扩展名推导用途）。
    */
-  async createPhotoFromBuffer(albumId: string, buffer: Buffer): Promise<Photo> {
+  async createPhotoFromBuffer(
+    albumId: string,
+    buffer: Buffer,
+    options: { stageOriginal?: boolean } = {},
+  ): Promise<Photo> {
     await this.processing.assertBufferSupported(buffer);
 
     const sha256 = createHash("sha256").update(buffer).digest("hex");
@@ -125,7 +141,9 @@ export class PhotoService {
       }));
 
       try {
-        await this.storage.put(originalKey, buffer);
+        if (options.stageOriginal) {
+          await this.storage.put(originalKey, buffer);
+        }
         await Promise.all(
           renditionFiles.map(({ key, rendition }) =>
             this.storage.put(key, rendition.buffer),
@@ -163,7 +181,7 @@ export class PhotoService {
         // 事务返回类型不带 include，重新查询补齐关联
         return this.get(created.id);
       } catch (error) {
-        // 清理已写入的文件后重试（publicId 撞唯一约束）
+        // 清理已写入的文件后重试（publicId 撞唯一约束；导入未落原件时该键本就不存在）
         await this.storage.deleteMany([
           originalKey,
           ...renditionFiles.map(({ key }) => key),
@@ -174,6 +192,53 @@ export class PhotoService {
       }
     }
     throw new Error("unreachable");
+  }
+
+  /**
+   * 从网盘重建展示变体（ADR 0005 容灾，单张起步）：
+   * 母版权威在网盘——dlink 下载原件，sha256 校验一致后重新生成
+   * thumb/display 覆盖本地变体。本地变体丢失/损坏时用。
+   */
+  async rebuildRenditions(id: string): Promise<Photo> {
+    const photo = await this.prisma.photo.findUnique({
+      where: { id },
+      select: { id: true, publicId: true, sha256: true, netdiskFsId: true },
+    });
+    if (!photo) {
+      throw new NotFoundException("照片不存在");
+    }
+    if (!photo.netdiskFsId) {
+      throw new BadRequestException("该照片尚未推送到网盘，没有可用的网盘母本");
+    }
+
+    const { buffer } = await this.baiduDownload.downloadByFsId(
+      Number(photo.netdiskFsId),
+    );
+    const sha256 = createHash("sha256").update(buffer).digest("hex");
+    if (sha256 !== photo.sha256) {
+      throw new ConflictException(
+        "网盘文件内容与站内记录不一致（sha256 校验失败），请人工核对后再试",
+      );
+    }
+
+    const renditions = await this.processing.generateRenditions(buffer);
+    const renditionFiles = renditions.map((rendition) => ({
+      key: `photos/${photo.publicId}/${rendition.variant.toLowerCase()}.webp`,
+      rendition,
+    }));
+    for (const { key, rendition } of renditionFiles) {
+      await this.storage.put(key, rendition.buffer);
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.photoRendition.deleteMany({ where: { photoId: id } });
+      await tx.photoRendition.createMany({
+        data: renditionFiles.map(({ key, rendition }) => ({
+          photoId: id,
+          ...toRenditionRecord(rendition, key),
+        })),
+      });
+    });
+    return this.get(id);
   }
 
   async get(id: string): Promise<Photo> {

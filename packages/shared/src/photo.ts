@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { tagSchema } from "./tag.js";
 
-export const photoVariantSchema = z.enum(["THUMB", "DISPLAY", "LARGE"]);
+// 两档展示变体（ADR 0005）：large(2560) 档已移除，展示上限为 display(1600)
+export const photoVariantSchema = z.enum(["THUMB", "DISPLAY"]);
 export type PhotoVariant = z.infer<typeof photoVariantSchema>;
 
 export const imageFormatSchema = z.enum(["WEBP", "JPEG"]);
