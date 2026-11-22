@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { Album } from "@photo/shared";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import {
   ChevronDown,
   ChevronUp,
@@ -77,6 +77,7 @@ export function AlbumDetailPage() {
 }
 
 function AlbumDetail({ albumId }: { albumId: string }) {
+  const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -88,6 +89,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   const [moveSelectKey, setMoveSelectKey] = useState(0);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [deletePhotoId, setDeletePhotoId] = useState<string | null>(null);
+  const [deleteAlbumOpen, setDeleteAlbumOpen] = useState(false);
 
   const invalidate = useInvalidateAlbum(albumId);
 
@@ -136,8 +138,20 @@ function AlbumDetail({ albumId }: { albumId: string }) {
     mutationFn: (photoId: string) =>
       apiFetch<void>(`/admin/photos/${photoId}`, { method: "DELETE" }),
     onSuccess: () => {
-      toast.success("照片已删除");
+      toast.success("照片已删除，网盘文件保留并归档");
       invalidate();
+    },
+    onError: fail,
+  });
+
+  /** 删除专辑：站内下架（专辑+照片+变体+分享），网盘文件保留并归档。 */
+  const deleteAlbumMutation = useMutation({
+    mutationFn: () =>
+      apiFetch<void>(`/admin/albums/${albumId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast.success("专辑已删除，网盘文件保留并归档");
+      invalidate();
+      navigate({ to: "/albums" });
     },
     onError: fail,
   });
@@ -149,7 +163,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         body: JSON.stringify({ photoIds }),
       }),
     onSuccess: ({ deleted }) => {
-      toast.success(`已删除 ${deleted} 张照片`);
+      toast.success(`已删除 ${deleted} 张照片，网盘文件保留并归档`);
       setSelected(new Set());
       invalidate();
     },
@@ -345,6 +359,15 @@ function AlbumDetail({ albumId }: { albumId: string }) {
                 </>
               )}
             </Button>
+            <Button
+              disabled={deleteAlbumMutation.isPending}
+              onClick={() => setDeleteAlbumOpen(true)}
+              type="button"
+              variant="ghost"
+            >
+              <Trash2 size={15} />
+              删除专辑
+            </Button>
           </div>
         )}
       </div>
@@ -455,7 +478,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
       <ConfirmDialog
         danger
         confirmText="删除"
-        description={`确定删除选中的 ${selected.size} 张照片？`}
+        description={`将移除选中的 ${selected.size} 张照片的站内记录，网盘文件保留并归档。`}
         onConfirm={() => batchDeleteMutation.mutateAsync([...selected])}
         onOpenChange={setBatchDeleteOpen}
         open={batchDeleteOpen}
@@ -466,13 +489,25 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         <ConfirmDialog
           danger
           confirmText="删除"
-          description="确定删除这张照片？"
+          description="将移除这张照片的站内记录，网盘文件保留并归档。"
           onConfirm={() => deleteMutation.mutateAsync(deletePhotoId)}
           onOpenChange={(open) => {
             if (!open) setDeletePhotoId(null);
           }}
           open
           title="删除照片"
+        />
+      )}
+
+      {album && (
+        <ConfirmDialog
+          danger
+          confirmText="删除"
+          description={`将移除 ${album.photoCount} 张照片的站内记录，网盘文件保留并归档；专辑与分享链接一并下架，不可恢复。`}
+          onConfirm={() => deleteAlbumMutation.mutateAsync()}
+          onOpenChange={setDeleteAlbumOpen}
+          open={deleteAlbumOpen}
+          title={`删除专辑「${album.title}」`}
         />
       )}
 

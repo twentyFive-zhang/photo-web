@@ -194,18 +194,6 @@ model BaiduCredential {
   updatedAt    DateTime @updatedAt
 }
 
-/// 站内已删除、网盘镜像删除待人工确认的照片（API 删除是否进回收站无承诺，按不可恢复对待）
-model NetdiskPendingDelete {
-  id          String   @id @default(cuid())
-  netdiskFsId String
-  path        String
-  filename    String
-  albumTitle  String
-  createdAt   DateTime @default(now())
-
-  @@unique([netdiskFsId])
-}
-
 /// 推送网盘重试耗尽后的持久化失败记录（重推成功或人工忽略后清除；
 /// 一张照片最多一条，重复失败覆盖更新，全量推送兜底不再让失败只留在 stdout）
 model NetdiskPushFailure {
