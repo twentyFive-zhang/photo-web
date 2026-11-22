@@ -444,6 +444,25 @@ export class NetdiskSyncService implements OnModuleInit {
   }
 
   /**
+   * 站内删除时移除对应照片的上行推送任务（竞态第一道闸，JIANGLIUER-102）：
+   * 等待/延迟中的 push-${photoId} 任务直接删——照片已删，推上去只会留下
+   * 无映射的孤儿文件。正在分片上传中的活跃任务不硬拆（可能已上传大半），
+   * 交给 pushPhoto 回写的 P2025 兜底登记托管归档（第二道闸），两道并用。
+   */
+  async removeQueuedPushJobs(photoIds: string[]): Promise<void> {
+    for (const photoId of photoIds) {
+      const job = await this.queue.getJob(`push-${photoId}`);
+      if (!job) {
+        continue;
+      }
+      const state = await job.getState();
+      if (state === "waiting" || state === "delayed") {
+        await job.remove().catch(() => undefined);
+      }
+    }
+  }
+
+  /**
    * 推送失败照片重推：清掉旧映射与失败记录后复用既有 push 管线
    * （jobId 与单张推送相同，天然去重；推送成功后 netdiskFsId 重新回写）。
    * 仅适用于推送失败的照片——其暂存原件仍在本地，可重试；网盘侧母本丢失

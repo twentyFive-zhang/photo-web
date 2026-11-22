@@ -176,12 +176,15 @@ export class AlbumService {
     const photos = await this.prisma.photo.findMany({
       where: { albumId: id },
       select: {
+        id: true,
         originalKey: true,
         renditions: { select: { key: true } },
         netdiskFsId: true,
         netdiskPath: true,
       },
     });
+    // 竞态第一道闸：清掉排队中的上行推送任务（照片已删，推上去是孤儿文件）
+    await this.netdisk.removeQueuedPushJobs(photos.map((photo) => photo.id));
     // 已镜像照片的网盘文件不删，先登记托管归档再删库（登记失败即报错，
     // 专辑未动管理员可直接重试；先登记保证文件始终处于扫描隔离下，
     // JIANGLIUER-102：站内删除不碰网盘，ADR 0005 注记）
