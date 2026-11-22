@@ -19,16 +19,17 @@ export const photoRenditionSchema = z.object({
 });
 export type PhotoRendition = z.infer<typeof photoRenditionSchema>;
 
-/** 后台照片视图。exif 为相机/镜头/光圈/快门/ISO/拍摄时间等结构化数据，不含 GPS。 */
+/**
+ * 后台照片视图。照片独立于专辑（ADR 0006）：albums 为成员关系摘要
+ * （一张照片可属多个专辑，也可不属于任何专辑）；排序是成员关系的属性，
+ * 不在照片上。exif 不含 GPS。
+ */
 export const photoSchema = z.object({
   id: z.string(),
   publicId: z.string(),
-  albumId: z.string(),
-  album: z.object({
-    id: z.string(),
-    publicId: z.string(),
-    title: z.string(),
-  }),
+  albums: z.array(
+    z.object({ id: z.string(), publicId: z.string(), title: z.string() }),
+  ),
   title: z.string().nullable(),
   caption: z.string().nullable(),
   originalKey: z.string(),
@@ -36,7 +37,7 @@ export const photoSchema = z.object({
   width: z.number().int(),
   height: z.number().int(),
   exif: z.record(z.string(), z.unknown()).nullable(),
-  sortOrder: z.number().int(),
+  renditions: z.array(photoRenditionSchema),
   tags: z.array(tagSchema),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -55,12 +56,6 @@ export const setPhotoTagsInputSchema = z.object({
     .max(50, "一张照片最多 50 个标签"),
 });
 export type SetPhotoTagsInput = z.infer<typeof setPhotoTagsInputSchema>;
-
-export const batchMovePhotosInputSchema = z.object({
-  photoIds: z.array(z.string().min(1)).min(1, "至少选择一张照片"),
-  targetAlbumId: z.string().min(1),
-});
-export type BatchMovePhotosInput = z.infer<typeof batchMovePhotosInputSchema>;
 
 export const batchDeletePhotosInputSchema = z.object({
   photoIds: z.array(z.string().min(1)).min(1, "至少选择一张照片"),

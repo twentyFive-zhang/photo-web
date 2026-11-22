@@ -78,7 +78,7 @@ const uploadStorage = diskStorage({
   },
 });
 
-/** 百度网盘镜像同步：状态、手动扫描、全量推送、托管归档、直接管理。 */
+/** 百度网盘母版同步：状态、手动扫描、全量推送、托管文件、直接管理。 */
 @Controller("admin/netdisk")
 @UseGuards(AdminGuard)
 export class NetdiskController {
@@ -123,7 +123,6 @@ export class NetdiskController {
         photoId: row.photoId,
         publicId: row.publicId,
         filename: row.filename,
-        albumTitle: row.albumTitle,
         errno: row.errno,
         error: row.error,
         attemptedAt: row.attemptedAt.toISOString(),
@@ -213,8 +212,8 @@ export class NetdiskController {
   }
 
   /**
-   * 托管归档清单：直接上传 + 站内删除自动归档的网盘文件登记
-   * （fsId/path/uploadedAt，设置页「网盘归档（托管）」卡片展示）。
+   * 托管文件清单（ADR 0004 直接上传通道）：fsId/path/uploadedAt 登记展示；
+   * ADR 0006 后唯一来源是网盘管理页直接上传的任意格式文件。
    */
   @Get("managed")
   async managed(): Promise<NetdiskManagedFiles> {
@@ -222,9 +221,8 @@ export class NetdiskController {
   }
 
   /**
-   * 解除托管：按网盘路径精确移除登记（目录前缀一并移除）。解除后下轮
-   * 扫描不再跳过这些文件，按所在目录重新导入 = 恢复（专辑以 UNLISTED
-   * 形态按目录名重建）。
+   * 解除托管：按网盘路径精确移除登记（目录前缀一并移除）。解除后这些
+   * 文件回到待导入状态，可在网盘页/待导入清单手动导入为照片。
    */
   @Post("managed/unmanage")
   @HttpCode(HttpStatus.OK)
@@ -267,8 +265,8 @@ export class NetdiskController {
 
   /**
    * 删除（单删/批删/文件夹级联共用）：百度默认删除（进回收站），
-   * 镜像联动即时清映射（变回「未推送」，全量推送/按专辑补推可恢复）；
-   * 托管登记同步移除（解除隔离，文件消失后登记由扫描自愈兜底）。
+   * 索引联动即时清映射（变回「未同步」，暂存原件仍在的可全量推送恢复）；
+   * 托管登记同步移除（文件消失后登记由扫描自愈兜底）。
    */
   @Post("entries/delete")
   @HttpCode(HttpStatus.OK)

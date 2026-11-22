@@ -61,17 +61,23 @@ async function FeaturedStrip() {
         {photos.map((photo) => {
           const thumb = photo.renditions.find((r) => r.variant === "DISPLAY");
           if (!thumb) return null;
+          // 照片独立于专辑（ADR 0006）：未入任何专辑的精选照片不渲染跳转
+          const image = (
+            /* biome-ignore lint/performance/noImgElement: 图 URL 来自 API rendition（本地 /media），不走 next/image 优化 */
+            <img
+              alt={photo.title ?? "精选照片"}
+              className="aspect-square w-full rounded-xl object-cover transition-opacity hover:opacity-80"
+              loading="lazy"
+              src={thumb.url}
+            />
+          );
           return (
             <li key={photo.publicId}>
-              <Link href={`/albums/${photo.album.publicId}`}>
-                {/* biome-ignore lint/performance/noImgElement: 图 URL 来自 API rendition（本地 /media），不走 next/image 优化 */}
-                <img
-                  alt={photo.title ?? "精选照片"}
-                  className="aspect-square w-full rounded-xl object-cover transition-opacity hover:opacity-80"
-                  loading="lazy"
-                  src={thumb.url}
-                />
-              </Link>
+              {photo.album ? (
+                <Link href={`/albums/${photo.album.publicId}`}>{image}</Link>
+              ) : (
+                image
+              )}
             </li>
           );
         })}

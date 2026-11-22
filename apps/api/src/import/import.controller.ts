@@ -27,6 +27,14 @@ export class ImportController {
     return this.importService.createBaiduImport(body);
   }
 
+  @Get()
+  listRecent(@Query("take") take?: string): Promise<ImportJob[]> {
+    const limit = Number.parseInt(take ?? "5", 10);
+    return this.importService.listRecent(
+      Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 20) : 5,
+    );
+  }
+
   @Get(":jobId")
   getJob(@Param("jobId") jobId: string): Promise<ImportJob> {
     return this.importService.getJob(jobId);
@@ -35,23 +43,5 @@ export class ImportController {
   @Post(":jobId/retry")
   retry(@Param("jobId") jobId: string): Promise<ImportJob> {
     return this.importService.retry(jobId);
-  }
-}
-
-@Controller("admin/albums")
-@UseGuards(AdminGuard)
-export class AlbumImportsController {
-  constructor(private readonly importService: ImportService) {}
-
-  @Get(":albumId/imports")
-  listByAlbum(
-    @Param("albumId") albumId: string,
-    @Query("take") take?: string,
-  ): Promise<ImportJob[]> {
-    const limit = Number.parseInt(take ?? "5", 10);
-    return this.importService.listByAlbum(
-      albumId,
-      Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 20) : 5,
-    );
   }
 }

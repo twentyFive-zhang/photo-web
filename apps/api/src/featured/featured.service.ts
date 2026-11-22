@@ -78,7 +78,11 @@ export class FeaturedService {
     });
   }
 
-  /** 公开精选：含 rendition URL 与所属专辑（用于跳转）。 */
+  /**
+   * 公开精选：含 rendition URL 与所属专辑（用于跳转）。ADR 0006 后照片
+   * 可不属于任何专辑——无成员关系时 album 为 null（前台不渲染跳转链接）；
+   * 多归属时取成员最早的专辑作跳转目标。
+   */
   async listPublic(): Promise<PublicFeaturedPhoto[]> {
     const items = await this.prisma.featuredPhoto.findMany({
       orderBy: { sortOrder: "asc" },
@@ -87,7 +91,13 @@ export class FeaturedService {
           include: {
             renditions: true,
             tags: { include: { tag: true } },
-            album: { select: { publicId: true, title: true } },
+            memberships: {
+              orderBy: { createdAt: "asc" as const },
+              take: 1,
+              include: {
+                album: { select: { publicId: true, title: true } },
+              },
+            },
           },
         },
       },
@@ -110,10 +120,7 @@ export class FeaturedService {
         url: this.storage.publicUrl(rendition.key),
       })),
       tags: item.photo.tags.map(({ tag }) => ({ id: tag.id, name: tag.name })),
-      album: {
-        publicId: item.photo.album.publicId,
-        title: item.photo.album.title,
-      },
+      album: item.photo.memberships[0]?.album ?? null,
     }));
   }
 }

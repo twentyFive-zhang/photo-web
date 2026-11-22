@@ -51,9 +51,9 @@ export const publicAlbumSchema = z.object({
 });
 export type PublicAlbum = z.infer<typeof publicAlbumSchema>;
 
-/** 公开精选照片：附所属专辑用于跳转。 */
+/** 公开精选照片：附所属专辑用于跳转；照片未入任何专辑时 album 为 null。 */
 export const publicFeaturedPhotoSchema = publicPhotoSchema.extend({
-  album: z.object({ publicId: z.string(), title: z.string() }),
+  album: z.object({ publicId: z.string(), title: z.string() }).nullable(),
 });
 export type PublicFeaturedPhoto = z.infer<typeof publicFeaturedPhotoSchema>;
 

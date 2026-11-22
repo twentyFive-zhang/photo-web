@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,37 +6,33 @@ import {
   Param,
   Patch,
   Post,
-  UploadedFile,
   UseGuards,
-  UseInterceptors,
 } from "@nestjs/common";
-import { FileInterceptor } from "@nestjs/platform-express";
 import type {
+  AddAlbumPhotosInput,
   Album,
+  AlbumPhoto,
   CreateAlbumInput,
-  Photo,
+  RemoveAlbumPhotosInput,
   ReorderPhotosInput,
   UpdateAlbumInput,
 } from "@photo/shared";
 import {
+  addAlbumPhotosInputSchema,
   createAlbumInputSchema,
+  removeAlbumPhotosInputSchema,
   reorderPhotosInputSchema,
   updateAlbumInputSchema,
 } from "@photo/shared";
 import { AdminGuard } from "../common/admin.guard.js";
 import { ZodValidationPipe } from "../common/zod-validation.pipe.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
-import { PhotoService } from "../photo/photo.service.js";
-// biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { AlbumService } from "./album.service.js";
 
 @Controller("admin/albums")
 @UseGuards(AdminGuard)
 export class AlbumController {
-  constructor(
-    private readonly albumService: AlbumService,
-    private readonly photoService: PhotoService,
-  ) {}
+  constructor(private readonly albumService: AlbumService) {}
 
   @Get()
   list(): Promise<Album[]> {
@@ -64,6 +59,7 @@ export class AlbumController {
     return this.albumService.update(id, body);
   }
 
+  /** 删除专辑 = 站内下架：成员关系级联，照片保留在照片库，网盘零调用。 */
   @Delete(":id")
   async remove(@Param("id") id: string): Promise<void> {
     await this.albumService.remove(id);
@@ -76,21 +72,28 @@ export class AlbumController {
   }
 
   @Get(":id/photos")
-  getPhotos(@Param("id") id: string) {
+  getPhotos(@Param("id") id: string): Promise<AlbumPhoto[]> {
     return this.albumService.getPhotos(id);
   }
 
-  /** 本地上传（multipart，字段名 file）；可重复调用，sortOrder 依次追加。 */
-  @Post(":id/photos/upload")
-  @UseInterceptors(FileInterceptor("file"))
-  uploadPhoto(
+  /** 挑图入专辑（追加到末尾）。 */
+  @Post(":id/photos")
+  addPhotos(
     @Param("id") id: string,
-    @UploadedFile() file?: Express.Multer.File,
-  ): Promise<Photo> {
-    if (!file) {
-      throw new BadRequestException("缺少文件字段 file");
-    }
-    return this.photoService.upload(id, file);
+    @Body(new ZodValidationPipe(addAlbumPhotosInputSchema))
+    body: AddAlbumPhotosInput,
+  ): Promise<void> {
+    return this.albumService.addPhotos(id, body);
+  }
+
+  /** 移出成员（照片保留在照片库）。 */
+  @Post(":id/photos/remove")
+  removePhotos(
+    @Param("id") id: string,
+    @Body(new ZodValidationPipe(removeAlbumPhotosInputSchema))
+    body: RemoveAlbumPhotosInput,
+  ): Promise<void> {
+    return this.albumService.removePhotos(id, body);
   }
 
   @Post(":id/photos/reorder")

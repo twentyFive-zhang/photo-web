@@ -44,7 +44,6 @@ export class ImportProcessor extends WorkerHost {
     }
 
     // 上次运行中断（进程被杀/Redis 重启）的条目重置后继续。
-    // 任务被级联删（专辑在排队期间被下架）→ 置 RUNNING 撞 P2025：记日志跳过。
     await this.prisma.importItem.updateMany({
       where: { jobId: dbJob.id, status: { in: IN_FLIGHT_STATUSES } },
       data: { status: "PENDING", error: null },
@@ -61,21 +60,14 @@ export class ImportProcessor extends WorkerHost {
         return null;
       });
     if (resumed === null) {
-      this.logger.warn(
-        `导入任务已被删除（专辑下架级联），跳过（${job.data.importJobId}）`,
-      );
+      this.logger.warn(`导入任务已被删除，跳过（${job.data.importJobId}）`);
       return;
     }
 
     for (const item of dbJob.items.filter(
       (entry) => entry.status === "PENDING",
     )) {
-      await this.processItem(
-        dbJob.id,
-        dbJob.albumId,
-        item.id,
-        Number(item.sourceFileId),
-      );
+      await this.processItem(dbJob.id, item.id, Number(item.sourceFileId));
     }
 
     await this.finalize(dbJob.id);
@@ -83,7 +75,6 @@ export class ImportProcessor extends WorkerHost {
 
   private async processItem(
     jobId: string,
-    albumId: string,
     itemId: string,
     fsId: number,
   ): Promise<void> {
@@ -100,12 +91,10 @@ export class ImportProcessor extends WorkerHost {
         where: { id: itemId },
         data: { status: "PROCESSING" },
       });
-      // 网盘导入（ADR 0005）：原件本就在网盘——拉一次 buffer 只生成变体，
-      // 不落本地原件、不入 staging、不触发推送；直接回写镜像映射。
-      const photo = await this.photoService.createPhotoFromBuffer(
-        albumId,
-        buffer,
-      );
+      // 网盘导入（ADR 0005/0006）：原件本就在网盘——拉一次 buffer 只生成变体，
+      // 不落本地原件、不入 staging、不触发推送；直接回写 fsid 索引与路径缓存。
+      // 照片不进任何专辑（收编两段式第一步），专辑组成在专辑编辑页挑图。
+      const photo = await this.photoService.createPhotoFromBuffer(buffer);
       await this.prisma.photo.update({
         where: { id: photo.id },
         data: {
@@ -119,12 +108,11 @@ export class ImportProcessor extends WorkerHost {
         data: { status: "SUCCEEDED", photoId: photo.id },
       });
     } catch (error) {
-      // 专辑在导入进行中被删（JIANGLIUER-102）：任务与条目已级联删除，
-      // 照片行也建不进去（P2003 外键）——下载产物不入库，记日志跳过，
-      // 不再回写状态、不让任务报错重试
+      // 任务在导入进行中被删（级联清理）：照片行也建不进去（P2003 外键）
+      // ——下载产物不入库，记日志跳过，不再回写状态、不让任务报错重试
       if (isMissingRecordError(error) || isForeignKeyViolation(error)) {
         this.logger.warn(
-          `导入条目中止（专辑/任务已被删除，级联清理）：fsId=${fsId}`,
+          `导入条目中止（任务已被删除，级联清理）：fsId=${fsId}`,
         );
         return;
       }

@@ -35,9 +35,11 @@ export const baiduConnectionStatusSchema = z.object({
 });
 export type BaiduConnectionStatus = z.infer<typeof baiduConnectionStatusSchema>;
 
-/** 创建导入任务：专辑 + 勾选的网盘条目（文件或文件夹，文件夹服务端展开）。 */
+/**
+ * 创建导入任务（ADR 0006 收编两段式第一步）：勾选的网盘条目（文件或文件夹，
+ * 文件夹服务端展开）登记为照片——只建照片不进专辑；专辑组成在专辑编辑页挑图。
+ */
 export const createBaiduImportInputSchema = z.object({
-  albumId: z.string().min(1, "缺少目标专辑"),
   entries: z
     .array(
       z.object({
@@ -94,7 +96,6 @@ export const importJobSchema = z.object({
   id: z.string(),
   source: z.enum(["BAIDU", "LOCAL"]),
   status: importJobStatusSchema,
-  albumId: z.string(),
   total: z.number().int(),
   completed: z.number().int(),
   failed: z.number().int(),

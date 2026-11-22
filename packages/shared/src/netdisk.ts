@@ -15,7 +15,6 @@ export const netdiskPushFailureSchema = z.object({
   photoId: z.string(),
   publicId: z.string(),
   filename: z.string(),
-  albumTitle: z.string(),
   /** 百度 errno；非百度错误（网络/存储）为 null。 */
   errno: z.number().nullable(),
   error: z.string(),
@@ -24,7 +23,7 @@ export const netdiskPushFailureSchema = z.object({
 export type NetdiskPushFailure = z.infer<typeof netdiskPushFailureSchema>;
 
 /**
- * 母本丢失告警（ADR 0005）：网盘侧已找不到该照片的镜像文件，而本地按
+ * 母本丢失告警（ADR 0005）：网盘侧已找不到该照片的索引文件，而本地按
  * 「首推成功即删」约定也不再有原件——母版唯一的权威副本已丢失，站内
  * 不可自动修复，只能在设置页醒目告警。
  */
@@ -32,20 +31,33 @@ export const netdiskMasterLostPhotoSchema = z.object({
   photoId: z.string(),
   publicId: z.string(),
   filename: z.string(),
-  albumTitle: z.string(),
 });
 export type NetdiskMasterLostPhoto = z.infer<
   typeof netdiskMasterLostPhotoSchema
 >;
 
-/** 下行扫描报告（持久化在 SiteSetting.netdiskScanReport）。 */
+/** 扫描发现的待导入文件（源文件库中未被任何照片索引、也不在托管清单中的图片）。 */
+export const netdiskPendingFileSchema = z.object({
+  fsId: z.string(),
+  path: z.string(),
+  filename: z.string(),
+  size: z.number(),
+});
+export type NetdiskPendingFile = z.infer<typeof netdiskPendingFileSchema>;
+
+/**
+ * 下行扫描报告（持久化在 SiteSetting.netdiskScanReport；ADR 0006 扫描降级）：
+ * 只发现待导入文件、刷新路径缓存、报告母版丢失；不建专辑、不自动导入。
+ */
 export const netdiskScanReportSchema = z.object({
   status: z.enum(["RUNNING", "DONE", "FAILED"]),
   scannedAt: z.string(),
-  /** 本次扫描自动创建的专辑标题。 */
-  albumsCreated: z.array(z.string()),
-  /** 自动导入的新照片数。 */
-  importedCount: z.number(),
+  /** 待导入文件总数（网盘侧未被索引、不在托管清单的图片）。 */
+  pendingCount: z.number(),
+  /** 待导入文件明细（展示上限 200 条，全量以 pendingCount 为准）。 */
+  pendingFiles: z.array(netdiskPendingFileSchema),
+  /** 本轮按 fsId 刷新了 netdiskPath 缓存的文件数。 */
+  pathsRefreshed: z.number(),
   /** 母本丢失（网盘侧消失且本地无原件）的照片。 */
   masterLost: z.array(netdiskMasterLostPhotoSchema),
   error: z.string().nullable(),
@@ -148,9 +160,8 @@ export type NetdiskUploadAccepted = z.infer<typeof netdiskUploadAcceptedSchema>;
 
 /**
  * 托管文件登记（持久化在 SiteSetting.netdiskManagedFiles JSON 列）。
- * 两类来源：直接上传的托管文件（ADR 0004），以及站内删除照片后自动
- * 转托管归档的网盘文件（JIANGLIUER-102，删除不碰网盘）。
- * 下行扫描据此跳过托管文件（不入 Photo 表、不进相册）；
+ * ADR 0006 后唯一来源：网盘管理页直接上传的任意格式文件（ADR 0004），
+ * 不属于任何照片流程——不进 Photo 表、不进专辑、前台不可见，下行扫描跳过。
  * 条目随扫描自愈修剪（网盘上已不存在的清除），uploadedAt 便于人工排查。
  */
 export const netdiskManagedFilesSchema = z.object({
@@ -164,7 +175,7 @@ export const netdiskManagedFilesSchema = z.object({
 });
 export type NetdiskManagedFiles = z.infer<typeof netdiskManagedFilesSchema>;
 
-/** 解除托管输入：按网盘路径精确移除登记（解除后下轮扫描按目录重导 = 恢复）。 */
+/** 解除托管输入：按网盘路径精确移除登记（解除后文件回到待导入状态，可再导入）。 */
 export const netdiskUnmanageInputSchema = z.object({
   paths: z
     .array(z.string().min(1, "路径不能为空"))
