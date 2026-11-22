@@ -4,7 +4,10 @@ import type {
   CreateBaiduImportInput,
   NetdiskUploadTask,
 } from "@photo/shared";
-import { sanitizeNetdiskName } from "@photo/shared";
+import {
+  netdiskCreateFolderInputSchema,
+  sanitizeNetdiskName,
+} from "@photo/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -56,6 +59,7 @@ import {
 import { ApiError, apiFetch } from "@/lib/api";
 import { AdminShell } from "@/lib/shell";
 import { baiduStatusQuery } from "../albums/baidu-import-dialog";
+import { FolderPickerTree, type NodeState } from "./folder-picker-tree";
 
 /** 只导入图片：与后端 isImportableImage 同判据（category===3 为主，扩展名兜底）。 */
 const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "webp"]);
@@ -90,15 +94,6 @@ function dedupeById(entries: BaiduFileEntry[]): BaiduFileEntry[] {
   });
 }
 
-/** 树节点状态：某目录已加载的条目与分页。根目录的 key 是空串（服务端归一化到应用目录）。 */
-interface NodeState {
-  entries: BaiduFileEntry[];
-  page: number;
-  hasMore: boolean;
-  expanded: boolean;
-  loading: boolean;
-}
-
 /** 浏览器 → 服务端的在途上传（服务端任务入队前先显示这里）。 */
 interface ClientUpload {
   id: string;
@@ -123,10 +118,14 @@ function NetdiskBrowser() {
   >(null);
   const [viewing, setViewing] = useState<number | null>(null);
   const [brokenThumbs, setBrokenThumbs] = useState<Set<string>>(new Set());
-  // 当前浏览目录（树 key，"" = 应用目录）：新建/上传的落点
+  // 当前浏览目录（树 key，"" = 应用目录）：上传落点
   const [currentDir, setCurrentDir] = useState("");
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  // 新建文件夹的父目录（弹框内选择器可改选；"" = 应用根）
+  const [newFolderDir, setNewFolderDir] = useState("");
+  // 名称字段是否已被交互（控制内联校验文案何时出现）
+  const [nameTouched, setNameTouched] = useState(false);
   // 待删除条目（单删/批删共用一个确认弹窗）
   const [deleteTarget, setDeleteTarget] = useState<{
     paths: string[];
@@ -255,6 +254,14 @@ function NetdiskBrowser() {
   }
 
   // ---- 新建文件夹 / 删除 / 直接上传 ----
+
+  /** 打开新建文件夹弹框（预选父目录 dir，弹框内可改选）。 */
+  function openNewFolder(dir: string) {
+    setNewFolderDir(dir);
+    setNewFolderName("");
+    setNameTouched(false);
+    setNewFolderOpen(true);
+  }
 
   const createFolder = useMutation({
     mutationFn: (vars: { dir: string; name: string }) =>
@@ -568,6 +575,22 @@ function NetdiskBrowser() {
             </span>
           )}
 
+          {entry.isDir && (
+            <Button
+              aria-label={`在 ${entry.serverFilename} 中新建文件夹`}
+              className="shrink-0 text-neutral-500 hover:text-red-400"
+              onClick={(event) => {
+                event.stopPropagation();
+                openNewFolder(entry.path);
+              }}
+              size="icon-sm"
+              type="button"
+              variant="ghost"
+            >
+              <FolderPlus size={14} />
+            </Button>
+          )}
+
           <Button
             aria-label={`删除 ${entry.serverFilename}`}
             className="shrink-0 text-neutral-500 hover:text-red-400"
@@ -700,6 +723,20 @@ function NetdiskBrowser() {
         !syncedFsIds.has(String(entry.fsId))),
   );
 
+  // 新建文件夹名称内联校验：空名/超长按 shared schema 文案拦截（输入框
+  // maxLength=100 对齐 schema max，超长实际到不了）；非法字符不拦——shared
+  // 规则是替换为下划线（sanitizeNetdiskName），在弹框内预览提示
+  const parsedName =
+    netdiskCreateFolderInputSchema.shape.name.safeParse(newFolderName);
+  const nameError = !parsedName.success
+    ? (parsedName.error.issues[0]?.message ?? "文件夹名称无效")
+    : newFolderName.trim() === ""
+      ? "文件夹名称不能为空"
+      : null;
+  const sanitizedName = sanitizeNetdiskName(newFolderName);
+  const showSanitizedPreview =
+    parsedName.success && sanitizedName !== newFolderName;
+
   return (
     <AdminShell>
       <main className="mx-auto min-h-screen max-w-6xl space-y-4 p-4 sm:p-8">
@@ -717,7 +754,7 @@ function NetdiskBrowser() {
               刷新
             </Button>
             <Button
-              onClick={() => setNewFolderOpen(true)}
+              onClick={() => openNewFolder(currentDir)}
               type="button"
               variant="outline"
             >
@@ -739,7 +776,7 @@ function NetdiskBrowser() {
         </div>
 
         <p className="text-xs text-neutral-600">
-          新建/上传落点：
+          上传落点：
           <span className="text-neutral-400">
             {currentDir === "" ? "应用目录（点击目录行切换）" : currentDir}
           </span>
@@ -804,7 +841,10 @@ function NetdiskBrowser() {
 
       <Dialog
         onOpenChange={(open) => {
-          if (!open) setNewFolderName("");
+          if (!open) {
+            setNewFolderName("");
+            setNameTouched(false);
+          }
           setNewFolderOpen(open);
         }}
         open={newFolderOpen}
@@ -815,27 +855,48 @@ function NetdiskBrowser() {
             <DialogDescription>
               在{" "}
               <span className="text-neutral-300">
-                {currentDir === "" ? "应用目录" : currentDir}
+                {newFolderDir === "" ? "应用目录" : newFolderDir}
               </span>{" "}
-              下创建。
+              下创建；可在下方目录树中改选父目录。
             </DialogDescription>
           </DialogHeader>
-          <Input
-            autoFocus
-            maxLength={100}
-            onChange={(event) => setNewFolderName(event.target.value)}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                newFolderName.trim() &&
-                !createFolder.isPending
-              ) {
-                createFolder.mutate({ dir: currentDir, name: newFolderName });
-              }
-            }}
-            placeholder="文件夹名称"
-            value={newFolderName}
+          <FolderPickerTree
+            nodes={nodes}
+            onChange={setNewFolderDir}
+            onFetchDir={fetchIntoTree}
+            rootDir={rootDirRef.current}
+            value={newFolderDir}
           />
+          <div className="space-y-1.5">
+            <Input
+              autoFocus
+              maxLength={100}
+              onChange={(event) => {
+                setNameTouched(true);
+                setNewFolderName(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !createFolder.isPending) {
+                  setNameTouched(true);
+                  if (nameError === null) {
+                    createFolder.mutate({
+                      dir: newFolderDir,
+                      name: newFolderName,
+                    });
+                  }
+                }
+              }}
+              placeholder="文件夹名称"
+              value={newFolderName}
+            />
+            {nameTouched && nameError ? (
+              <p className="text-xs text-red-400">{nameError}</p>
+            ) : showSanitizedPreview ? (
+              <p className="text-xs text-neutral-500">
+                非法字符将替换为下划线，保存为「{sanitizedName}」
+              </p>
+            ) : null}
+          </div>
           <DialogFooter>
             <Button
               onClick={() => setNewFolderOpen(false)}
@@ -845,9 +906,9 @@ function NetdiskBrowser() {
               取消
             </Button>
             <Button
-              disabled={!newFolderName.trim() || createFolder.isPending}
+              disabled={nameError !== null || createFolder.isPending}
               onClick={() =>
-                createFolder.mutate({ dir: currentDir, name: newFolderName })
+                createFolder.mutate({ dir: newFolderDir, name: newFolderName })
               }
               type="button"
             >
