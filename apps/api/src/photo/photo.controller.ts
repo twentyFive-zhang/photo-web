@@ -36,7 +36,7 @@ import { PhotoService } from "./photo.service.js";
 export class PhotoController {
   constructor(private readonly photoService: PhotoService) {}
 
-  /** 照片库全量列表（专辑编辑挑图弹窗用）。 */
+  /** 照片库全量列表（专辑编辑挑图弹窗用）；仅带 THUMB rendition，完整变体走 :id 详情。 */
   @Get()
   list(): Promise<Photo[]> {
     return this.photoService.list();
