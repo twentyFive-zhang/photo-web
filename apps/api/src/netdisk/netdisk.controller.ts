@@ -25,9 +25,12 @@ import type {
   NetdiskCreateFolderResult,
   NetdiskDeleteInput,
   NetdiskDeleteResult,
+  NetdiskManagedFiles,
   NetdiskRepushInput,
   NetdiskRepushResult,
   NetdiskStatus,
+  NetdiskUnmanageInput,
+  NetdiskUnmanageResult,
   NetdiskUploadAccepted,
   NetdiskUploadTasks,
 } from "@photo/shared";
@@ -35,6 +38,7 @@ import {
   netdiskCreateFolderInputSchema,
   netdiskDeleteInputSchema,
   netdiskRepushInputSchema,
+  netdiskUnmanageInputSchema,
   sanitizeNetdiskName,
 } from "@photo/shared";
 import { diskStorage } from "multer";
@@ -74,7 +78,7 @@ const uploadStorage = diskStorage({
   },
 });
 
-/** 百度网盘镜像同步：状态、手动扫描、全量推送、待确认删除、直接管理。 */
+/** 百度网盘镜像同步：状态、手动扫描、全量推送、托管归档、直接管理。 */
 @Controller("admin/netdisk")
 @UseGuards(AdminGuard)
 export class NetdiskController {
@@ -93,29 +97,20 @@ export class NetdiskController {
 
   @Get("status")
   async status(): Promise<NetdiskStatus> {
-    const [
-      connection,
-      setting,
-      totalPhotos,
-      syncedCount,
-      pendingDeletes,
-      pushFailures,
-    ] = await Promise.all([
-      this.credentials.getStatus(),
-      this.prisma.siteSetting.upsert({
-        where: { id: "singleton" },
-        update: {},
-        create: { id: "singleton" },
-      }),
-      this.prisma.photo.count(),
-      this.prisma.photo.count({ where: { netdiskFsId: { not: null } } }),
-      this.prisma.netdiskPendingDelete.findMany({
-        orderBy: { createdAt: "desc" },
-      }),
-      this.prisma.netdiskPushFailure.findMany({
-        orderBy: { attemptedAt: "desc" },
-      }),
-    ]);
+    const [connection, setting, totalPhotos, syncedCount, pushFailures] =
+      await Promise.all([
+        this.credentials.getStatus(),
+        this.prisma.siteSetting.upsert({
+          where: { id: "singleton" },
+          update: {},
+          create: { id: "singleton" },
+        }),
+        this.prisma.photo.count(),
+        this.prisma.photo.count({ where: { netdiskFsId: { not: null } } }),
+        this.prisma.netdiskPushFailure.findMany({
+          orderBy: { attemptedAt: "desc" },
+        }),
+      ]);
 
     return {
       appConfigured: connection.appConfigured,
@@ -123,12 +118,6 @@ export class NetdiskController {
       dailyScan: setting.netdiskDailyScan,
       syncedCount,
       totalPhotos,
-      pendingDeletes: pendingDeletes.map((row) => ({
-        id: row.id,
-        filename: row.filename,
-        albumTitle: row.albumTitle,
-        createdAt: row.createdAt.toISOString(),
-      })),
       pushFailures: pushFailures.map((row) => ({
         id: row.id,
         photoId: row.photoId,
@@ -223,44 +212,27 @@ export class NetdiskController {
     await this.prisma.netdiskPushFailure.delete({ where: { id } });
   }
 
-  /** 确认删除网盘镜像文件（站内已删，这里真正删网盘侧副本）。 */
-  @Post("pending-deletes/:id/confirm")
-  @HttpCode(HttpStatus.OK)
-  async confirmPendingDelete(@Param("id") id: string): Promise<void> {
-    const row = await this.prisma.netdiskPendingDelete.findUnique({
-      where: { id },
-    });
-    if (!row) {
-      throw new NotFoundException("待确认删除项不存在");
-    }
-    if (!row.path) {
-      throw new BadRequestException("缺少网盘路径，无法删除，请手动处理");
-    }
-    try {
-      await this.credentials.withAccessToken((token) =>
-        this.baiduApi.filemanager(token, "delete", [{ path: row.path }]),
-      );
-    } catch (error) {
-      // 文件已不存在 = 目标状态已达成
-      if (!(error instanceof BaiduApiError && error.errno === -9)) {
-        throw error;
-      }
-    }
-    await this.prisma.netdiskPendingDelete.delete({ where: { id } });
+  /**
+   * 托管归档清单：直接上传 + 站内删除自动归档的网盘文件登记
+   * （fsId/path/uploadedAt，设置页「网盘归档（托管）」卡片展示）。
+   */
+  @Get("managed")
+  async managed(): Promise<NetdiskManagedFiles> {
+    return this.sync.listManagedFiles();
   }
 
-  /** 放弃删除：网盘保留副本，移除待确认记录。 */
-  @Post("pending-deletes/:id/dismiss")
+  /**
+   * 解除托管：按网盘路径精确移除登记（目录前缀一并移除）。解除后下轮
+   * 扫描不再跳过这些文件，按所在目录重新导入 = 恢复（专辑以 UNLISTED
+   * 形态按目录名重建）。
+   */
+  @Post("managed/unmanage")
   @HttpCode(HttpStatus.OK)
-  async dismissPendingDelete(@Param("id") id: string): Promise<void> {
-    const row = await this.prisma.netdiskPendingDelete.findUnique({
-      where: { id },
-      select: { id: true },
-    });
-    if (!row) {
-      throw new NotFoundException("待确认删除项不存在");
-    }
-    await this.prisma.netdiskPendingDelete.delete({ where: { id } });
+  async unmanage(
+    @Body(new ZodValidationPipe(netdiskUnmanageInputSchema))
+    body: NetdiskUnmanageInput,
+  ): Promise<NetdiskUnmanageResult> {
+    return { removed: await this.sync.removeManagedEntriesByPaths(body.paths) };
   }
 
   // ---------- 直接管理（新建/删除/直传，JIANGLIUER-94，ADR 0004） ----------
@@ -296,7 +268,7 @@ export class NetdiskController {
   /**
    * 删除（单删/批删/文件夹级联共用）：百度默认删除（进回收站），
    * 镜像联动即时清映射（变回「未推送」，全量推送/按专辑补推可恢复）；
-   * 托管登记同步移除。不动 NetdiskPendingDelete 表。
+   * 托管登记同步移除（解除隔离，文件消失后登记由扫描自愈兜底）。
    */
   @Post("entries/delete")
   @HttpCode(HttpStatus.OK)

@@ -173,19 +173,30 @@ export class AlbumService {
 
   async remove(id: string): Promise<void> {
     // 级联删除在 DB 层完成；存储文件需先收集、删库后清理
-    const existing = await this.prisma.album.findUnique({
-      where: { id },
-      select: { title: true },
-    });
     const photos = await this.prisma.photo.findMany({
       where: { albumId: id },
       select: {
+        id: true,
         originalKey: true,
         renditions: { select: { key: true } },
         netdiskFsId: true,
         netdiskPath: true,
       },
     });
+    // 竞态第一道闸：清掉排队中的上行推送任务（照片已删，推上去是孤儿文件）
+    await this.netdisk.removeQueuedPushJobs(photos.map((photo) => photo.id));
+    // 已镜像照片的网盘文件不删，先登记托管归档再删库（登记失败即报错，
+    // 专辑未动管理员可直接重试；先登记保证文件始终处于扫描隔离下，
+    // JIANGLIUER-102：站内删除不碰网盘，ADR 0005 注记）
+    const mirrored = photos.filter(
+      (photo) => photo.netdiskFsId && photo.netdiskPath,
+    );
+    for (const photo of mirrored) {
+      await this.netdisk.addManagedEntry({
+        fsId: photo.netdiskFsId ?? "",
+        path: photo.netdiskPath ?? "",
+      });
+    }
     await this.prisma.album.delete({ where: { id } }).catch(() => {
       throw new NotFoundException("专辑不存在");
     });
@@ -194,17 +205,6 @@ export class AlbumService {
         photo.originalKey,
         ...photo.renditions.map((rendition) => rendition.key),
       ]),
-    );
-    // 已镜像照片 → 网盘删除待人工确认（不自动传播，ADR 0002）
-    await this.netdisk.markPendingDeletes(
-      photos
-        .filter((photo) => photo.netdiskFsId)
-        .map((photo) => ({
-          netdiskFsId: photo.netdiskFsId ?? "",
-          netdiskPath: photo.netdiskPath,
-          fallbackFilename: photo.originalKey.split("/").pop() ?? "",
-          albumTitle: existing?.title ?? "",
-        })),
     );
   }
 

@@ -14,8 +14,10 @@ import {
   featuredItemSchema,
   importJobSchema,
   loginInputSchema,
+  netdiskManagedFilesSchema,
   netdiskScanTriggeredSchema,
   netdiskStatusSchema,
+  netdiskUnmanageInputSchema,
   photoSchema,
   publicAlbumSchema,
   publicAlbumSummarySchema,
@@ -528,7 +530,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "get",
     path: "/api/admin/netdisk/status",
-    summary: "网盘同步状态（连接、开关、进度、待确认删除、扫描报告）",
+    summary: "网盘同步状态（连接、开关、进度、推送失败、扫描报告）",
     tags: ["netdisk"],
     security,
     responses: ok(netdiskStatus, "同步状态"),
@@ -579,27 +581,29 @@ export function buildOpenApiDocument(): OpenApiDocument {
     },
   });
   registry.registerPath({
-    method: "post",
-    path: "/api/admin/netdisk/pending-deletes/{id}/confirm",
-    summary: "确认删除网盘镜像文件（站内已删；API 删除不可恢复）",
+    method: "get",
+    path: "/api/admin/netdisk/managed",
+    summary:
+      "托管归档清单：直接上传 + 站内删除自动归档的网盘文件登记（扫描跳过依据）",
     tags: ["netdisk"],
     security,
-    request: { params: z.object({ id: z.string() }) },
     responses: {
-      200: { description: "已删除" },
-      404: { description: "不存在" },
+      ...ok(netdiskManagedFilesSchema, "托管条目列表"),
     },
   });
   registry.registerPath({
     method: "post",
-    path: "/api/admin/netdisk/pending-deletes/{id}/dismiss",
-    summary: "放弃删除网盘镜像文件（保留副本，移除待确认记录）",
+    path: "/api/admin/netdisk/managed/unmanage",
+    summary: "解除托管：按网盘路径移除登记，下轮扫描按目录重新导入（恢复）",
     tags: ["netdisk"],
     security,
-    request: { params: z.object({ id: z.string() }) },
+    request: {
+      body: {
+        content: { "application/json": { schema: netdiskUnmanageInputSchema } },
+      },
+    },
     responses: {
-      200: { description: "已保留" },
-      404: { description: "不存在" },
+      ...ok(z.object({ removed: z.number() }), "移除条数"),
     },
   });
 

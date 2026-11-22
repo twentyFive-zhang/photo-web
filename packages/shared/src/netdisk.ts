@@ -9,15 +9,6 @@ export function sanitizeNetdiskName(name: string): string {
   return cleaned.length > 0 ? cleaned : "_";
 }
 
-/** 站内已删除、网盘删除待人工确认的条目。 */
-export const netdiskPendingDeleteSchema = z.object({
-  id: z.string(),
-  filename: z.string(),
-  albumTitle: z.string(),
-  createdAt: z.string(),
-});
-export type NetdiskPendingDelete = z.infer<typeof netdiskPendingDeleteSchema>;
-
 /** 推送网盘重试耗尽后的持久化失败记录（重推成功或忽略后清除）。 */
 export const netdiskPushFailureSchema = z.object({
   id: z.string(),
@@ -69,7 +60,6 @@ export const netdiskStatusSchema = z.object({
   /** 已同步到网盘的照片数。 */
   syncedCount: z.number(),
   totalPhotos: z.number(),
-  pendingDeletes: z.array(netdiskPendingDeleteSchema),
   /** 推送失败（重试耗尽）的照片列表。 */
   pushFailures: z.array(netdiskPushFailureSchema),
   scanReport: netdiskScanReportSchema.nullable(),
@@ -158,8 +148,10 @@ export type NetdiskUploadAccepted = z.infer<typeof netdiskUploadAcceptedSchema>;
 
 /**
  * 托管文件登记（持久化在 SiteSetting.netdiskManagedFiles JSON 列）。
+ * 两类来源：直接上传的托管文件（ADR 0004），以及站内删除照片后自动
+ * 转托管归档的网盘文件（JIANGLIUER-102，删除不碰网盘）。
  * 下行扫描据此跳过托管文件（不入 Photo 表、不进相册）；
- * scannedAt 由扫描用 seen 集合自愈修剪，uploadedAt 便于人工排查。
+ * 条目随扫描自愈修剪（网盘上已不存在的清除），uploadedAt 便于人工排查。
  */
 export const netdiskManagedFilesSchema = z.object({
   entries: z.array(
@@ -171,3 +163,17 @@ export const netdiskManagedFilesSchema = z.object({
   ),
 });
 export type NetdiskManagedFiles = z.infer<typeof netdiskManagedFilesSchema>;
+
+/** 解除托管输入：按网盘路径精确移除登记（解除后下轮扫描按目录重导 = 恢复）。 */
+export const netdiskUnmanageInputSchema = z.object({
+  paths: z
+    .array(z.string().min(1, "路径不能为空"))
+    .min(1, "至少选择一个要解除的条目")
+    .max(500, "单次最多解除 500 项"),
+});
+export type NetdiskUnmanageInput = z.infer<typeof netdiskUnmanageInputSchema>;
+
+export const netdiskUnmanageResultSchema = z.object({
+  removed: z.number(),
+});
+export type NetdiskUnmanageResult = z.infer<typeof netdiskUnmanageResultSchema>;
