@@ -278,7 +278,9 @@ export class AlbumService {
 
   /**
    * 加入成员（追加到专辑末尾）；已是成员的照片自动忽略。
-   * max(sortOrder) 在锁住专辑行的事务内读取，并发添加不会产生并列 sortOrder。
+   * max(sortOrder) 在锁住专辑行的事务内读取，并发添加不会产生并列 sortOrder；
+   * 锁后过滤已是成员的照片，只对新增成员批量写入（序号连续，不产生空洞），
+   * 单条 createMany 替代逐条 upsert，避免大提交触发交互式事务 5s 超时。
    */
   async addPhotos(albumId: string, input: AddAlbumPhotosInput): Promise<void> {
     await requireAlbum(this.prisma, albumId);
@@ -291,31 +293,49 @@ export class AlbumService {
       throw new NotFoundException("存在不存在的照片");
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      await lockAlbumRow(tx, albumId);
-      const maxRow = await tx.albumPhoto.aggregate({
-        where: { albumId },
-        _max: { sortOrder: true },
-      });
-      let next = (maxRow._max.sortOrder ?? -1) + 1;
-      for (const photoId of input.photoIds) {
-        await tx.albumPhoto.upsert({
-          where: { albumId_photoId: { albumId, photoId } },
-          update: {},
-          create: { albumId, photoId, sortOrder: next++ },
+    await this.prisma.$transaction(
+      async (tx) => {
+        await lockAlbumRow(tx, albumId);
+
+        // 已是成员的重复提交静默忽略（幂等）
+        const existingMembers = await tx.albumPhoto.findMany({
+          where: { albumId, photoId: { in: input.photoIds } },
+          select: { photoId: true },
         });
-      }
-    });
+        const memberSet = new Set(existingMembers.map((m) => m.photoId));
+        const newPhotoIds = input.photoIds.filter((id) => !memberSet.has(id));
+        if (newPhotoIds.length === 0) {
+          return;
+        }
+
+        const maxRow = await tx.albumPhoto.aggregate({
+          where: { albumId },
+          _max: { sortOrder: true },
+        });
+        let next = (maxRow._max.sortOrder ?? -1) + 1;
+        await tx.albumPhoto.createMany({
+          data: newPhotoIds.map((photoId) => ({
+            albumId,
+            photoId,
+            sortOrder: next++,
+          })),
+        });
+      },
+      { timeout: 15000 },
+    );
   }
 
-  /** 移出成员：只拆成员关系，照片本身保留在照片库。 */
+  /** 移出成员：只拆成员关系，照片本身保留在照片库。与 add/reorder 一样先锁专辑行，成员集变更完全串行化。 */
   async removePhotos(
     albumId: string,
     input: RemoveAlbumPhotosInput,
   ): Promise<void> {
     await requireAlbum(this.prisma, albumId);
-    await this.prisma.albumPhoto.deleteMany({
-      where: { albumId, photoId: { in: input.photoIds } },
+    await this.prisma.$transaction(async (tx) => {
+      await lockAlbumRow(tx, albumId);
+      await tx.albumPhoto.deleteMany({
+        where: { albumId, photoId: { in: input.photoIds } },
+      });
     });
   }
 
@@ -334,24 +354,25 @@ export class AlbumService {
       throw new NotFoundException("photoIds 存在重复");
     }
 
-    const members = await this.prisma.albumPhoto.findMany({
-      where: { albumId, photoId: { in: input.photoIds } },
-      select: { photoId: true },
-    });
-    if (members.length !== input.photoIds.length) {
-      throw new NotFoundException("存在不属于该专辑的照片");
-    }
-    const memberCount = await this.prisma.albumPhoto.count({
-      where: { albumId },
-    });
-    if (input.photoIds.length !== memberCount) {
-      throw new BadRequestException(
-        "photoIds 必须包含该专辑全部成员照片（不支持部分重排）",
-      );
-    }
-
     await this.prisma.$transaction(async (tx) => {
       await lockAlbumRow(tx, albumId);
+
+      // 校验在锁后执行：并发 add/remove 与本次重排完全串行化，
+      // 校验通过的成员集在事务内不会再变化，消除 TOCTOU 窗口。
+      const members = await tx.albumPhoto.findMany({
+        where: { albumId, photoId: { in: input.photoIds } },
+        select: { photoId: true },
+      });
+      if (members.length !== input.photoIds.length) {
+        throw new NotFoundException("存在不属于该专辑的照片");
+      }
+      const memberCount = await tx.albumPhoto.count({ where: { albumId } });
+      if (input.photoIds.length !== memberCount) {
+        throw new BadRequestException(
+          "photoIds 必须包含该专辑全部成员照片（不支持部分重排）",
+        );
+      }
+
       for (const [index, photoId] of input.photoIds.entries()) {
         await tx.albumPhoto.update({
           where: { albumId_photoId: { albumId, photoId } },

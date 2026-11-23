@@ -229,7 +229,13 @@ export function buildOpenApiDocument(): OpenApiDocument {
       params: z.object({ id: z.string() }),
       body: { content: json(reorderPhotosInputSchema) },
     },
-    responses: { ...noContent(), 404: { description: "不存在或不属于该专辑" } },
+    responses: {
+      ...noContent(),
+      400: {
+        description: "photoIds 未包含该专辑全部成员照片（不支持部分重排）",
+      },
+      404: { description: "不存在或不属于该专辑（含 photoIds 重复）" },
+    },
   });
 
   // ---------- public（访客） ----------
@@ -281,7 +287,8 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "get",
     path: "/api/admin/photos",
-    summary: "照片库全量列表（专辑编辑挑图弹窗用，新照片在前）",
+    summary:
+      "照片库全量列表（专辑编辑挑图弹窗用，新照片在前；rendition 仅返回 THUMB）",
     tags: ["photos"],
     security,
     responses: ok(z.array(photo), "照片列表"),
