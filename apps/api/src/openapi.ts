@@ -89,14 +89,46 @@ export function buildOpenApiDocument(): OpenApiDocument {
 
   // ---------- auth ----------
   registry.registerPath({
+    method: "get",
+    path: "/api/auth/login",
+    summary: "统一登录：302 跳身份源（Authentik）authorize",
+    tags: ["auth"],
+    responses: {
+      302: { description: "跳转身份源登录页" },
+      503: { description: "统一登录未配置或身份源不可达" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/auth/callback",
+    summary:
+      "OIDC 回调：校验 state/nonce/PKCE → 建号或映射 → 写 session → 跳回后台",
+    tags: ["auth"],
+    request: {
+      query: z.object({
+        code: z.string().optional(),
+        state: z.string().optional(),
+        error: z.string().optional(),
+        error_description: z.string().optional(),
+      }),
+    },
+    responses: {
+      302: { description: "登录成功，跳回后台" },
+      401: { description: "state/nonce/PKCE 校验失败或不在准入组" },
+      403: { description: "不在后台准入组" },
+      502: { description: "身份源不可达（fail-closed）" },
+    },
+  });
+  registry.registerPath({
     method: "post",
     path: "/api/auth/login",
-    summary: "管理员登录（限流：每 IP 每分钟 10 次）",
+    summary:
+      "break-glass 应急登录（仅本地应急账号；统一登录走 GET /api/auth/login）",
     tags: ["auth"],
     request: { body: { content: json(loginInputSchema) } },
     responses: {
       ...ok(admin, "登录成功，设置 session cookie"),
-      401: { description: "用户名或密码错误" },
+      401: { description: "用户名或密码错误，或该账号为统一登录账号" },
       429: { description: "触发限流" },
     },
   });
@@ -119,11 +151,16 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "patch",
     path: "/api/auth/password",
-    summary: "修改密码",
+    summary:
+      "修改密码（仅 break-glass 本地账号；统一登录账号密码由身份源管理）",
     tags: ["auth"],
     security,
     request: { body: { content: json(changePasswordInputSchema) } },
-    responses: { ...noContent(), 401: { description: "当前密码错误" } },
+    responses: {
+      ...noContent(),
+      401: { description: "当前密码错误" },
+      403: { description: "统一登录账号不支持本地改密" },
+    },
   });
 
   // ---------- albums ----------
