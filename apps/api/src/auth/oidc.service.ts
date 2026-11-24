@@ -25,6 +25,9 @@ const BACKSTOP_CACHE_TTL_MS = 60_000;
 /** 准入组 pk 缓存时长。 */
 const GROUP_PK_CACHE_TTL_MS = 600_000;
 
+/** 回调错误页回显的 query 字段长度上限（截断防超长注入/刷屏，配合 errorPage 转义）。 */
+const ERROR_FIELD_MAX_LENGTH = 200;
+
 type AuthentikUser = {
   pk: number;
   username: string;
@@ -91,8 +94,15 @@ export class OidcService {
       error_description?: string;
     };
     if (query.error) {
+      // error/error_description 来自 URL query（攻击者可控），回显前截断；
+      // HTML 转义在 auth.controller 的 errorPage 统一做
+      const code = query.error.slice(0, ERROR_FIELD_MAX_LENGTH);
+      const description = query.error_description?.slice(
+        0,
+        ERROR_FIELD_MAX_LENGTH,
+      );
       throw new UnauthorizedException(
-        `身份源拒绝授权（${query.error}${query.error_description ? `: ${query.error_description}` : ""}）`,
+        `身份源拒绝授权（${code}${description ? `: ${description}` : ""}）`,
       );
     }
 

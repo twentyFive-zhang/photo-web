@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -70,7 +71,8 @@ export class AuthService {
 
   /**
    * 统一登录映射：sub 已有记录 → 直接登录；首次登录且在准入组 → 自动建号
-   * （记录来源 = sub 非空，passwordHash 为不可登录占位）；不在准入组 → 403。
+   * （记录来源 = sub 非空，passwordHash 为不可登录占位）；不在准入组 → 403；
+   * 首登但本地已有同名账号 → 409（不消歧，原因见下）。
    */
   async loginWithOidc(claims: OidcClaims): Promise<Admin> {
     const adminGroup = this.config.get<string>(
@@ -90,20 +92,31 @@ export class AuthService {
       return toAdmin(existing);
     }
 
-    const username = await this.availableOidcUsername(
-      claims.username,
-      claims.sub,
-    );
+    // 重名不消歧：会话回查只能按本地 username 反查 IdP（Authentik Core API
+    // 仅支持 ?username= 查询），静默改名（preferred.<sub8> 之类）会让回查
+    // 永远查不到人 → 该账号登录后必然掉线。改为拒绝本次登录，由管理员处理
+    // 本地同名账号（删除或改名）后再登录。
+    const collision = await this.prisma.admin.findUnique({
+      where: { username: claims.username },
+      select: { id: true },
+    });
+    if (collision) {
+      this.logger.warn(
+        `OIDC 登录拒绝：本地已存在同名账号 username=${claims.username} sub=${claims.sub}，请先处理本地重名账号`,
+      );
+      throw new ConflictException("本地已存在同名账号，请先处理");
+    }
+
     const created = await this.prisma.admin.create({
       data: {
         sub: claims.sub,
-        username,
+        username: claims.username,
         // 不可登录占位：login() 对 sub 非空账号直接拒绝，这里只为满足非空约束
         passwordHash: await argon2.hash(randomBytes(32).toString("hex")),
       },
     });
     this.logger.log(
-      `OIDC 首次登录自动建号: username=${username} sub=${claims.sub}`,
+      `OIDC 首次登录自动建号: username=${claims.username} sub=${claims.sub}`,
     );
     return toAdmin(created);
   }
@@ -149,29 +162,5 @@ export class AuthService {
       where: { id: adminId },
       data: { passwordHash: await argon2.hash(newPassword) },
     });
-  }
-
-  /** OIDC 建号用户名：优先 preferred_username，与现有账号重名时用 sub 前缀消歧。 */
-  private async availableOidcUsername(
-    preferred: string,
-    sub: string,
-  ): Promise<string> {
-    const taken = await this.prisma.admin.findUnique({
-      where: { username: preferred },
-      select: { id: true },
-    });
-    if (!taken) {
-      return preferred;
-    }
-    const fallback = `${preferred}.${sub.slice(0, 8)}`;
-    const fallbackTaken = await this.prisma.admin.findUnique({
-      where: { username: fallback },
-      select: { id: true },
-    });
-    if (!fallbackTaken) {
-      return fallback;
-    }
-    // 理论上到不了这里（sub 前缀 + 时间戳），兜底保证不撞唯一约束
-    return `${preferred}.${Date.now().toString(36)}`;
   }
 }
