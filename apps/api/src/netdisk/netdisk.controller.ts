@@ -167,18 +167,6 @@ export class NetdiskController {
     return { queued: state.queued };
   }
 
-  /** 按专辑补推：该专辑未同步照片入队（连接网盘前上传或推送失败的存量）。 */
-  @Post("albums/:albumId/push")
-  @HttpCode(HttpStatus.OK)
-  async pushAlbum(
-    @Param("albumId") albumId: string,
-  ): Promise<{ queued: number }> {
-    if (!(await this.credentials.isConnected())) {
-      throw new BadRequestException("尚未连接百度网盘");
-    }
-    return { queued: await this.sync.enqueuePushAlbum(albumId) };
-  }
-
   /**
    * 推送失败一键重推：清旧映射后复用既有 push 管线（幂等，jobId 去重）。
    * 仅适用于推送失败的照片（暂存原件仍在本地，可重试）；网盘侧母本丢失的
