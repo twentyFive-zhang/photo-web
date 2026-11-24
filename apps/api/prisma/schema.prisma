@@ -48,6 +48,9 @@ enum ImportItemStatus {
 model Admin {
   id           String   @id @default(cuid())
   username     String   @unique
+  // 统一身份源（Authentik）的 subject；null = 本地 break-glass 应急账号（保留密码登录），
+  // 非空 = OIDC 登录自动建号的记录来源标记（此类账号不可密码登录）
+  sub          String?  @unique
   passwordHash String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

@@ -7,6 +7,7 @@ import { AlbumModule } from "./album/album.module.js";
 import { AppController } from "./app.controller.js";
 import { AppService } from "./app.service.js";
 import { AuthModule } from "./auth/auth.module.js";
+import { OidcModule } from "./auth/oidc.module.js";
 import { BaiduModule } from "./baidu/baidu.module.js";
 import { validateEnv } from "./config/env.js";
 import { FeaturedModule } from "./featured/featured.module.js";
@@ -56,6 +57,8 @@ function redisConnectionOptions(config: ConfigService) {
     }),
     PrismaModule,
     StorageModule,
+    // 全局：OidcService 被登录流（AuthController）与会话回查（AdminGuard，各业务模块）共用
+    OidcModule,
     AuthModule,
     AlbumModule,
     PhotoModule,
