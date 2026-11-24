@@ -67,6 +67,26 @@ function isImportableImage(filename: string, category: number | null): boolean {
   return IMAGE_EXTS.has(ext);
 }
 
+/** 本地唯一 ID，仅用作前端 state key，不发送到服务端。
+ * crypto.randomUUID 仅安全上下文（HTTPS/localhost）可用；admin 支持局域网 IP 访问
+ * （vite server.host: true），非安全上下文下该 API 不存在，
+ * 故用 crypto.getRandomValues（不受限）拼 v4 UUID 兜底。 */
+function makeLocalId(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(
+    "",
+  );
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function formatSize(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(0)} KB`;
@@ -353,7 +373,7 @@ function NetdiskBrowser() {
         toast.error(`「${file.name}」是空文件，已跳过`);
         continue;
       }
-      const id = crypto.randomUUID();
+      const id = makeLocalId();
       setClientUploads((prev) => [
         ...prev,
         { id, filename: file.name, size: file.size, pct: 0 },
