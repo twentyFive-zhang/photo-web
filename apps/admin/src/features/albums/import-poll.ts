@@ -1,4 +1,4 @@
-import type { ImportJob } from "@photo/shared";
+import type { ImportJob, ImportJobStatus } from "@photo/shared";
 
 /** 有活跃任务时的高频轮询间隔。 */
 export const ACTIVE_POLL_INTERVAL_MS = 2_000;
@@ -11,6 +11,54 @@ export const PROBE_INTERVAL_MS = 60_000;
 
 /** 仍视为「进行中」的导入任务状态。 */
 export const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
+
+/** 已到「不再推进」的导入任务终态。 */
+export const TERMINAL_JOB_STATUSES = new Set<ImportJobStatus>([
+  "SUCCEEDED",
+  "PARTIAL",
+  "FAILED",
+]);
+
+/** 终态判定所需的最小任务快照（ImportJob 结构化子集，便于单测构造）。 */
+export interface ImportTerminalSnapshot {
+  id: string;
+  status: ImportJobStatus;
+  /** 附带专辑（ADR 0007）：非空表示导入成功后照片自动纳入该专辑。 */
+  albumId: string | null;
+}
+
+/**
+ * 任务进入终态时需要失效的专辑查询键（纯函数，便于单测）。
+ * 只有附带专辑的任务才影响专辑数据——未附带时导入只产照片，
+ * 专辑成员不变，无需失效；albumId 为空或未到终态返回空数组。
+ */
+export function albumKeysToInvalidateOnTerminal(
+  job: ImportTerminalSnapshot,
+): string[][] {
+  if (!TERMINAL_JOB_STATUSES.has(job.status) || job.albumId === null) {
+    return [];
+  }
+  return [["album", job.albumId], ["album-photos", job.albumId], ["albums"]];
+}
+
+/**
+ * 终态失效触发器（闭包式，跨横幅重挂载保持）：按「jobId + status」
+ * 翻转触发一次，状态未推进的重复轮询不重复失效；重试把任务打回
+ * QUEUED 再到终态时视为新的翻转，再次失效（重试可能补入新成员）。
+ */
+export function createTerminalInvalidator(): (
+  job: ImportTerminalSnapshot,
+) => string[][] {
+  let lastKey: string | null = null;
+  return (job) => {
+    const key = `${job.id}:${job.status}`;
+    if (lastKey === key) {
+      return [];
+    }
+    lastKey = key;
+    return albumKeysToInvalidateOnTerminal(job);
+  };
+}
 
 /**
  * 导入横幅的下次轮询间隔（纯函数，便于单测）。判定依据是缓存中

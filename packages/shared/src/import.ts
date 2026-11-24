@@ -104,6 +104,8 @@ export const importJobSchema = z.object({
   failed: z.number().int(),
   skipped: z.number().int(),
   error: z.string().nullable(),
+  // 可选附带专辑（ADR 0007）：非空时导入终态把照片自动纳入该专辑
+  albumId: z.string().nullable(),
   items: z.array(importItemSchema),
   createdAt: z.string(),
   updatedAt: z.string(),

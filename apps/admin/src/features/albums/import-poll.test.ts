@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { ImportJob, ImportJobStatus } from "@photo/shared";
 import {
   ACTIVE_POLL_INTERVAL_MS,
+  albumKeysToInvalidateOnTerminal,
   createImportPollTimer,
+  createTerminalInvalidator,
   nextImportPollInterval,
   PROBE_INTERVAL_MS,
 } from "./import-poll";
@@ -11,6 +13,8 @@ import {
  * 导入横幅轮询节奏单测（JIANGLIUER-136）：接口持续报错时不能形成
  * 2s 永不停歇的请求风暴——连续失败达阈值退避探测，成功自动续上，
  * 终态任务保持完全停止。
+ * 终态失效单测（JIANGLIUER-142）：附带专辑的任务首次翻转到终态时
+ * 失效该专辑的查询键，状态未推进不重复，重试回到终态再次失效。
  */
 
 function makeJob(status: ImportJobStatus, id = "job-1"): ImportJob {
@@ -23,6 +27,7 @@ function makeJob(status: ImportJobStatus, id = "job-1"): ImportJob {
     failed: 0,
     skipped: 0,
     error: null,
+    albumId: null,
     items: [],
     createdAt: "2026-11-24T00:00:00.000Z",
     updatedAt: "2026-11-24T00:00:00.000Z",
@@ -157,5 +162,101 @@ describe("createImportPollTimer", () => {
     expect(
       tick({ data: running, errorUpdatedAt: 400, dataUpdatedAt: 100 }),
     ).toBe(PROBE_INTERVAL_MS);
+  });
+});
+
+describe("albumKeysToInvalidateOnTerminal（JIANGLIUER-142 终态失效）", () => {
+  test("附带专辑的任务到终态：失效该专辑详情/成员/列表三组查询键", () => {
+    const job = { ...makeJob("SUCCEEDED"), albumId: "album-1" };
+    expect(albumKeysToInvalidateOnTerminal(job)).toEqual([
+      ["album", "album-1"],
+      ["album-photos", "album-1"],
+      ["albums"],
+    ]);
+  });
+
+  test("三种终态都触发（SUCCEEDED / PARTIAL / FAILED）", () => {
+    for (const status of ["SUCCEEDED", "PARTIAL", "FAILED"] as const) {
+      const job = { ...makeJob(status), albumId: "album-1" };
+      expect(albumKeysToInvalidateOnTerminal(job)).toHaveLength(3);
+    }
+  });
+
+  test("未到终态不失效（QUEUED/RUNNING 轮询中）", () => {
+    expect(
+      albumKeysToInvalidateOnTerminal({
+        id: "job-1",
+        status: "QUEUED",
+        albumId: "album-1",
+      }),
+    ).toEqual([]);
+    expect(
+      albumKeysToInvalidateOnTerminal({
+        id: "job-1",
+        status: "RUNNING",
+        albumId: "album-1",
+      }),
+    ).toEqual([]);
+  });
+
+  test("未附带专辑（albumId 为 null）不失效：导入只产照片，专辑成员不变", () => {
+    for (const status of ["SUCCEEDED", "PARTIAL", "FAILED"] as const) {
+      expect(
+        albumKeysToInvalidateOnTerminal({ id: "job-1", status, albumId: null }),
+      ).toEqual([]);
+    }
+  });
+});
+
+describe("createTerminalInvalidator（按 jobId + status 翻转触发一次）", () => {
+  test("首次翻转到终态失效一次，同一状态重复轮询不再失效", () => {
+    const invalidate = createTerminalInvalidator();
+    expect(
+      invalidate({ id: "job-1", status: "RUNNING", albumId: "album-1" }),
+    ).toEqual([]);
+    const terminal = invalidate({
+      id: "job-1",
+      status: "SUCCEEDED",
+      albumId: "album-1",
+    });
+    expect(terminal).toEqual([
+      ["album", "album-1"],
+      ["album-photos", "album-1"],
+      ["albums"],
+    ]);
+    // 终态后每次轮询拿到的还是同一个状态：不重复失效
+    expect(
+      invalidate({ id: "job-1", status: "SUCCEEDED", albumId: "album-1" }),
+    ).toEqual([]);
+  });
+
+  test("重试把任务打回 QUEUED 再到终态：视为新翻转，再次失效", () => {
+    const invalidate = createTerminalInvalidator();
+    expect(
+      invalidate({ id: "job-1", status: "SUCCEEDED", albumId: "album-1" }),
+    ).toHaveLength(3);
+    expect(
+      invalidate({ id: "job-1", status: "QUEUED", albumId: "album-1" }),
+    ).toEqual([]);
+    expect(
+      invalidate({ id: "job-1", status: "RUNNING", albumId: "album-1" }),
+    ).toEqual([]);
+    expect(
+      invalidate({ id: "job-1", status: "PARTIAL", albumId: "album-1" }),
+    ).toHaveLength(3);
+  });
+
+  test("不同任务各自触发一次（列表里最近任务换人）", () => {
+    const invalidate = createTerminalInvalidator();
+    expect(
+      invalidate({ id: "job-1", status: "SUCCEEDED", albumId: "album-1" }),
+    ).toHaveLength(3);
+    expect(
+      invalidate({ id: "job-2", status: "FAILED", albumId: "album-2" }),
+    ).toHaveLength(3);
+    // 回看旧任务（分页截断等）也按新翻转计——该状态未失效过
+    expect(
+      invalidate({ id: "job-1", status: "SUCCEEDED", albumId: "album-1" }),
+    ).toHaveLength(3);
   });
 });

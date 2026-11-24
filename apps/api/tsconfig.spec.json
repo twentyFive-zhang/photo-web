@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.build.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "types": ["node", "multer", "bun-types"]
+  },
+  "include": ["src/**/*.test.ts"],
+  "exclude": ["node_modules", "test", "dist"]
+}
