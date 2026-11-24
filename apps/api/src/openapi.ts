@@ -505,7 +505,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     method: "post",
     path: "/api/admin/imports/baidu",
     summary:
-      "创建网盘导入任务（文件夹同步展开，图片过滤，单任务 ≤500 张；只登记为照片，不进专辑）",
+      "创建网盘导入任务（文件夹同步展开，图片过滤，单任务 ≤500 张；只登记为照片，可选附带 albumId 导入成功自动纳入该专辑）",
     tags: ["import"],
     security,
     request: { body: { content: json(createBaiduImportInputSchema) } },
@@ -588,18 +588,6 @@ export function buildOpenApiDocument(): OpenApiDocument {
       ...ok(z.object({ queued: z.number() }), "已入队数量"),
       400: { description: "未连接百度网盘" },
       409: { description: "全量推送正在进行中" },
-    },
-  });
-  registry.registerPath({
-    method: "post",
-    path: "/api/admin/netdisk/albums/{albumId}/push",
-    summary: "按专辑补推：该专辑成员中未同步的照片入队上行",
-    tags: ["netdisk"],
-    security,
-    request: { params: z.object({ albumId: z.string() }) },
-    responses: {
-      ...ok(z.object({ queued: z.number() }), "已入队数量（0 = 无待同步）"),
-      400: { description: "未连接百度网盘" },
     },
   });
   registry.registerPath({

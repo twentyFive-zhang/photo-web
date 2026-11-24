@@ -5,8 +5,6 @@ import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import {
   ChevronDown,
   ChevronUp,
-  CloudDownload,
-  CloudUpload,
   Crown,
   EyeOff,
   Globe,
@@ -45,9 +43,8 @@ import {
   useFeaturedIds,
   useInvalidateAlbum,
 } from "@/lib/shell";
-import { BaiduImportDialog } from "./baidu-import-dialog";
+import { AlbumAddPhotosDialog } from "./album-add-photos-dialog";
 import { ImportJobBanner } from "./import-job-banner";
-import { PhotoPickerDialog } from "./photo-picker-dialog";
 import { QrDialog } from "./qr-dialog";
 
 const photoEditSchema = z.object({
@@ -79,7 +76,6 @@ function AlbumDetail({ albumId }: { albumId: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<AlbumPhotoRow | null>(null);
   const [showQr, setShowQr] = useState(false);
-  const [showImport, setShowImport] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [viewing, setViewing] = useState<number | null>(null);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
@@ -238,20 +234,6 @@ function AlbumDetail({ albumId }: { albumId: string }) {
     [photos],
   );
 
-  /** 按专辑补推未同步照片（连接网盘前上传或推送失败的存量）。 */
-  const pushAlbumMutation = useMutation({
-    mutationFn: () =>
-      apiFetch<{ queued: number }>(`/admin/netdisk/albums/${albumId}/push`, {
-        method: "POST",
-      }),
-    onSuccess: ({ queued }) => {
-      toast.success(
-        queued > 0 ? `已入队同步 ${queued} 张照片` : "本专辑照片都已同步",
-      );
-    },
-    onError: fail,
-  });
-
   /** 从网盘重建展示变体（本地 thumb/display 丢失或损坏时修复，ADR 0005）。 */
   const rebuildMutation = useMutation({
     mutationFn: (photoId: string) =>
@@ -399,27 +381,6 @@ function AlbumDetail({ albumId }: { albumId: string }) {
           </label>
         </Button>
 
-        <Button
-          className="border-dashed"
-          onClick={() => setShowImport(true)}
-          type="button"
-          variant="outline"
-        >
-          <CloudDownload size={15} />
-          从网盘导入
-        </Button>
-
-        <Button
-          className="border-dashed"
-          disabled={pushAlbumMutation.isPending}
-          onClick={() => pushAlbumMutation.mutate()}
-          type="button"
-          variant="outline"
-        >
-          <CloudUpload size={15} />
-          {pushAlbumMutation.isPending ? "入队中…" : "同步到网盘"}
-        </Button>
-
         {selected.size > 0 && (
           <>
             <span className="text-sm text-neutral-400">
@@ -460,16 +421,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
         <QrDialog album={album} onOpenChange={setShowQr} open={showQr} />
       )}
 
-      <BaiduImportDialog
-        onImported={() => {
-          setShowImport(false);
-          invalidate();
-        }}
-        onOpenChange={setShowImport}
-        open={showImport}
-      />
-
-      <PhotoPickerDialog
+      <AlbumAddPhotosDialog
         albumId={albumId}
         memberIds={memberIds}
         onChanged={invalidate}
@@ -548,7 +500,7 @@ function AlbumDetail({ albumId }: { albumId: string }) {
       {photosQuery.isPending && <p className="text-neutral-400">加载中…</p>}
       {photos.length === 0 && !photosQuery.isPending && (
         <p className="text-neutral-500">
-          还没有成员照片，点「添加照片」从照片库挑图。
+          还没有成员照片，点「添加照片」从照片库、本机或网盘添加。
         </p>
       )}
 
