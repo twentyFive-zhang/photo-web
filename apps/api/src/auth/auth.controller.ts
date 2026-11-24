@@ -32,12 +32,22 @@ function regenerate(request: SessionRequest): Promise<void> {
   });
 }
 
+/** 回调错误页要回显身份源/异常里的动态文本，必须实体转义（防反射型 XSS）。 */
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 /** 回调是浏览器导航，错误以极简 HTML 呈现（JSON 对人不可读）。 */
 function errorPage(status: number, message: string): string {
   return `<!doctype html><html lang="zh"><meta charset="utf-8"><title>登录失败</title>
 <body style="font-family:system-ui;max-width:32rem;margin:20vh auto;padding:0 1rem;color:#e5e5e5;background:#171717;text-align:center">
 <h1 style="font-size:1.1rem;font-weight:500">统一登录失败（HTTP ${status}）</h1>
-<p style="color:#a3a3a3">${message}</p>
+<p style="color:#a3a3a3">${escapeHtml(message)}</p>
 <p><a href="/api/auth/login" style="color:#93c5fd">重新登录</a></p>`;
 }
 

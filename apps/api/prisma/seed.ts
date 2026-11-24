@@ -23,7 +23,9 @@ try {
 
   await prisma.admin.upsert({
     where: { username },
-    update: { passwordHash, sub: null },
+    // update 只刷密码、不碰 sub：显式 sub: null 会把同名 OIDC 账号降级成
+    // break-glass（回查被跳过）；重跑 seed 不得改动账号的身份来源字段
+    update: { passwordHash },
     create: { username, passwordHash },
   });
 
