@@ -12,6 +12,7 @@ import { createRoot } from "react-dom/client";
 import { Toaster } from "sonner";
 import { AlbumDetailPage } from "./features/albums/album-detail-page";
 import { AlbumsPage } from "./features/albums/albums-page";
+import { GlassLoginPage } from "./features/auth/glass-login-page";
 import { LoginPage, RequireAuth } from "./features/auth/login-page";
 import { FeaturedPage } from "./features/featured/featured-page";
 import { NetdiskPage } from "./features/netdisk/netdisk-page";
@@ -34,6 +35,13 @@ const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   component: LoginPage,
+});
+
+// break-glass 应急登录（隐蔽入口，不在界面放链接）
+const glassLoginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/login/glass",
+  component: GlassLoginPage,
 });
 
 const albumsRoute = createRoute({
@@ -89,6 +97,7 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
+  glassLoginRoute,
   albumsRoute,
   albumDetailRoute,
   featuredRoute,
