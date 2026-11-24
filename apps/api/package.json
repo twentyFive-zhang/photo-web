@@ -10,8 +10,8 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main.js",
-    "typecheck": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.spec.json --noEmit",
-    "prisma:generate": "bun run --env-file=../../.env prisma generate",
+    "typecheck": "prisma generate && tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.spec.json --noEmit",
+    "prisma:generate": "prisma generate",
     "prisma:migrate": "bun run --env-file=../../.env prisma migrate dev",
     "prisma:deploy": "bun run --env-file=../../.env prisma migrate deploy",
     "prisma:seed": "bun run --env-file=../../.env prisma/seed.ts"
