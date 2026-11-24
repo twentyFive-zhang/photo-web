@@ -201,7 +201,7 @@ photo-web/
 
 ```bash
 cp .env.example .env
-bun install
+bun run bootstrap   # = bun install + build:shared + prisma generate + next typegen
 bun run db:up
 bun run db:migrate
 bun run db:seed
@@ -212,10 +212,11 @@ bun run dev
 - 后台：http://localhost:5173/admin/
 - API：http://localhost:3001/api/health
 - Swagger：http://localhost:3001/api/docs
-- 常用：`bun run lint`、`bun run build`、`bun run typecheck`、`bun run db:down`
+- 常用：`bun run lint`、`bun run build`、`bun run typecheck`、`bun test`、`bun run db:down`
 
 注意：
 
+- 全新 checkout（或删过 `node_modules`）先 `bun run bootstrap` 再跑测试，否则 `@prisma/client` 未生成会让 `bun test` 假红（详见 AGENTS.md「新 checkout 引导」）。bootstrap 幂等、不依赖 `.env`，重跑无害。
 - `db:migrate` / `db:seed` 通过 `--env-file=../../.env` 读根 `.env`；先复制 `.env.example`。
 - 设置 `SWAGGER_PASSWORD` 后，dev 也走 Basic Auth；生产必须设置。
 - `.env` 已被 git 忽略，不要提交。

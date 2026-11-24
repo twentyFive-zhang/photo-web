@@ -20,6 +20,7 @@
     "zod": "4.6.7"
   },
   "scripts": {
+    "bootstrap": "bun install && bun run build:shared && bun run db:generate && bun run --cwd apps/web typegen",
     "dev": "bun run build:shared && concurrently -n web,admin,api -c cyan,magenta,green \"bun run --cwd apps/web dev\" \"bun run --cwd apps/admin dev\" \"bun run --cwd apps/api start:dev\"",
     "build": "bun run build:shared && bun run --cwd apps/web build && bun run --cwd apps/admin build && bun run --cwd apps/api build",
     "build:shared": "bun run --cwd packages/shared build",
