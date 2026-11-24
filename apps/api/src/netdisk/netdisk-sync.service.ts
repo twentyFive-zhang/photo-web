@@ -515,35 +515,6 @@ export class NetdiskSyncService implements OnModuleInit {
   }
 
   /**
-   * 按专辑补推：该专辑成员中未同步的照片入队（jobId 与单张推送相同）。
-   * 入队前先清理停在 failed 集合的旧任务，否则同 jobId 的 addBulk 被
-   * 静默去重、补推被吞（JIANGLIUER-24）。返回入队数量。
-   */
-  async enqueuePushAlbum(albumId: string): Promise<number> {
-    if (!(await this.credentials.isConnected())) {
-      return 0;
-    }
-    const members = await this.prisma.albumPhoto.findMany({
-      where: { albumId, photo: { netdiskFsId: null } },
-      select: { photo: { select: { id: true, createdAt: true } } },
-      orderBy: { photo: { createdAt: "asc" as const } },
-    });
-    const photos = members.map((member) => member.photo);
-    if (photos.length === 0) {
-      return 0;
-    }
-    await this.removeFailedPushJobs(photos.map((photo) => photo.id));
-    await this.queue.addBulk(
-      photos.map((photo) => ({
-        name: "netdisk-sync",
-        data: { type: "push" as const, photoId: photo.id },
-        opts: { ...PUSH_JOB_OPTIONS, jobId: `push-${photo.id}` },
-      })),
-    );
-    return photos.length;
-  }
-
-  /**
    * 存量回填：所有未同步照片入队。进行中返回 null。
    * 不设自定义 jobId（BullMQ 走自增 id），不存在同 jobId 去重吞任务的问题；
    * removeOnFail 让失败任务不留残留（失败可见性走 DB 失败记录）。

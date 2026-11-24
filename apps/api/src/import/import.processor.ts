@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { ConflictException, Logger } from "@nestjs/common";
 import type { ImportItemStatus } from "@photo/shared";
 import type { Job } from "bullmq";
+// biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
+import { AlbumService } from "../album/album.service.js";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { BaiduDownloadService } from "../baidu/baidu-download.service.js";
 import {
@@ -28,6 +31,7 @@ export class ImportProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly baiduDownload: BaiduDownloadService,
     private readonly photoService: PhotoService,
+    private readonly albumService: AlbumService,
   ) {
     super();
   }
@@ -67,7 +71,12 @@ export class ImportProcessor extends WorkerHost {
     for (const item of dbJob.items.filter(
       (entry) => entry.status === "PENDING",
     )) {
-      await this.processItem(dbJob.id, item.id, Number(item.sourceFileId));
+      await this.processItem(
+        dbJob.id,
+        item.id,
+        Number(item.sourceFileId),
+        dbJob.albumId,
+      );
     }
 
     await this.finalize(dbJob.id);
@@ -77,7 +86,10 @@ export class ImportProcessor extends WorkerHost {
     jobId: string,
     itemId: string,
     fsId: number,
+    albumId: string | null,
   ): Promise<void> {
+    // buffer 提到 try 外：catch 内的去重命中分支要按内容找已有照片
+    let buffer: Buffer | undefined;
     try {
       await this.prisma.importItem.update({
         where: { id: itemId },
@@ -85,7 +97,9 @@ export class ImportProcessor extends WorkerHost {
       });
 
       // dlink 有时效：每条目下载前现取，绝不持久化
-      const { buffer, path } = await this.baiduDownload.downloadByFsId(fsId);
+      const downloaded = await this.baiduDownload.downloadByFsId(fsId);
+      buffer = downloaded.buffer;
+      const { path } = downloaded;
 
       await this.prisma.importItem.update({
         where: { id: itemId },
@@ -93,7 +107,7 @@ export class ImportProcessor extends WorkerHost {
       });
       // 网盘导入（ADR 0005/0006）：原件本就在网盘——拉一次 buffer 只生成变体，
       // 不落本地原件、不入 staging、不触发推送；直接回写 fsid 索引与路径缓存。
-      // 照片不进任何专辑（收编两段式第一步），专辑组成在专辑编辑页挑图。
+      // ADR 0007：任务附带 albumId 时，成功后由 attachToAlbum 自动纳入专辑。
       const photo = await this.photoService.createPhotoFromBuffer(buffer);
       await this.prisma.photo.update({
         where: { id: photo.id },
@@ -102,6 +116,7 @@ export class ImportProcessor extends WorkerHost {
           netdiskPath: path,
         },
       });
+      await this.attachToAlbum(albumId, photo.id);
 
       await this.prisma.importItem.update({
         where: { id: itemId },
@@ -115,6 +130,31 @@ export class ImportProcessor extends WorkerHost {
           `导入条目中止（任务已被删除，级联清理）：fsId=${fsId}`,
         );
         return;
+      }
+      // sha256 去重命中（ADR 0007）：附带专辑时把已存在的旧照片纳入该专辑，
+      // 条目按成功计（照片本就存在 + 已纳入，本次导入目标已达成）；
+      // 未附带专辑时维持原 SKIPPED 语义。去重命中不回写 fsid——旧照片可能
+      // 已有别的网盘映射或本地暂存原件，这里只管纳入。
+      if (error instanceof ConflictException && albumId && buffer) {
+        const duplicate = await this.findDuplicatePhoto(buffer);
+        if (duplicate) {
+          await this.attachToAlbum(albumId, duplicate.id);
+          await this.prisma.importItem
+            .update({
+              where: { id: itemId },
+              data: { status: "SUCCEEDED", photoId: duplicate.id },
+            })
+            .catch((updateError: unknown) => {
+              if (!isMissingRecordError(updateError)) {
+                throw updateError;
+              }
+              this.logger.warn(`导入条目已被删除，跳过状态回写（${itemId}）`);
+            });
+          this.logger.log(
+            `导入条目 sha256 去重命中，已有照片纳入专辑：fsId=${fsId} photoId=${duplicate.id}`,
+          );
+          return;
+        }
       }
       const skipped = error instanceof ConflictException;
       const message =
@@ -200,5 +240,38 @@ export class ImportProcessor extends WorkerHost {
         }
         this.logger.warn(`导入任务已被删除，跳过终态回写（${jobId}）`);
       });
+  }
+
+  /**
+   * 把照片纳入任务附带的目标专辑（ADR 0007 一步挂专辑；复用 AlbumService
+   * 的锁行 + max+1 追加逻辑）。专辑中途被删或成员写入失败时降级为仅入库
+   * （照片保留、无成员行、任务不判失败），只记 warning。未附带专辑时空操作。
+   */
+  private async attachToAlbum(
+    albumId: string | null,
+    photoId: string,
+  ): Promise<void> {
+    if (!albumId) {
+      return;
+    }
+    try {
+      await this.albumService.addPhotos(albumId, { photoIds: [photoId] });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `导入附带专辑失败，条目降级为仅入库：albumId=${albumId} photoId=${photoId} ${message}`,
+      );
+    }
+  }
+
+  /** 按内容 sha256 找已存在的照片（去重命中时纳入旧照片用）。 */
+  private async findDuplicatePhoto(
+    buffer: Buffer,
+  ): Promise<{ id: string } | null> {
+    const sha256 = createHash("sha256").update(buffer).digest("hex");
+    return this.prisma.photo.findUnique({
+      where: { sha256 },
+      select: { id: true },
+    });
   }
 }

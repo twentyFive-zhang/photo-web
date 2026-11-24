@@ -86,14 +86,24 @@ export class ImportService {
   ) {}
 
   /**
-   * 创建导入任务（ADR 0006 收编两段式第一步）：所选条目中文件夹在此同步
-   * 递归展开（图片过滤、500 上限），用户确认的总数即精确值。展开用 list
-   * 分页，每个 fsid 只入队一次。导入只把文件登记为照片（fsid 索引 +
-   * 生成变体），不进任何专辑。
+   * 创建导入任务（ADR 0006 收编两段式第一步；ADR 0007 一步挂专辑）：
+   * 所选条目中文件夹在此同步递归展开（图片过滤、500 上限），用户确认的总数
+   * 即精确值。展开用 list 分页，每个 fsid 只入队一次。导入只把文件登记为
+   * 照片（fsid 索引 + 生成变体）；可选附带 albumId，导入成功的条目由
+   * processor 自动纳入该专辑（含 sha256 去重命中的已有照片）。
    */
   async createBaiduImport(input: CreateBaiduImportInput): Promise<ImportJob> {
     if (!(await this.credentials.isConnected())) {
       throw new BadRequestException("尚未连接百度网盘");
+    }
+    if (input.albumId) {
+      const album = await this.prisma.album.findUnique({
+        where: { id: input.albumId },
+        select: { id: true },
+      });
+      if (!album) {
+        throw new NotFoundException("专辑不存在");
+      }
     }
 
     const files = new Map<number, { fsId: number; filename: string }>();
@@ -120,6 +130,7 @@ export class ImportService {
       data: {
         source: "BAIDU",
         total: files.size,
+        albumId: input.albumId ?? null,
         items: {
           createMany: {
             data: [...files.values()].map((file) => ({
