@@ -5,12 +5,15 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
-import { ACTIVE_STATUSES, nextImportPollInterval } from "./import-poll";
+import { ACTIVE_STATUSES, createImportPollTimer } from "./import-poll";
+
+// 模块级轮询决策器：连续失败计数跨横幅重挂载保持，重挂载不从零开始高频轮询。
+const resolvePollInterval = createImportPollTimer();
 
 /**
  * 最近导入任务进度横幅（全局视角，ADR 0006：导入只产照片不进专辑）：
  * 活跃任务每 2s 轮询，终态停止并提示到专辑编辑页挑图。
- * 轮询节奏（含失败退避）集中在 nextImportPollInterval（import-poll.ts）。
+ * 轮询节奏（含失败退避）集中在 import-poll.ts。
  */
 export function ImportJobBanner() {
   const queryClient = useQueryClient();
@@ -22,8 +25,7 @@ export function ImportJobBanner() {
     // 2s 轮询本身就是重试，关掉 react-query 内部重试，
     // 避免接口报错时每个周期 ×3 放大请求量。
     retry: false,
-    refetchInterval: (query) =>
-      nextImportPollInterval(query.state.data, query.state.fetchFailureCount),
+    refetchInterval: (query) => resolvePollInterval(query.state),
   });
 
   const retryMutation = useMutation({

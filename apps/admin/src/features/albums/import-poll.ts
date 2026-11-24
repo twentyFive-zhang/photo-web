@@ -19,7 +19,7 @@ export const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
  * 每 2s 一次、永不停止的请求风暴（JIANGLIUER-136）：
  * - 缓存数据里没有活跃任务 → false，完全停止轮询（终态语义不变）；
  * - 有活跃任务但连续失败 ≥ 阈值 → 退避为慢速探测，暂停 2s 高频轮询；
- *   react-query 的 fetchFailureCount 在任一次成功后归零，服务恢复即自动续上。
+ *   连续失败计数由 createImportPollTimer 维护，任一次成功即归零，服务恢复自动续上。
  */
 export function nextImportPollInterval(
   jobs: readonly ImportJob[] | undefined,
@@ -32,4 +32,40 @@ export function nextImportPollInterval(
   return failureCount >= POLL_FAILURE_THRESHOLD
     ? PROBE_INTERVAL_MS
     : ACTIVE_POLL_INTERVAL_MS;
+}
+
+/** 决策所需的查询状态快照（字段与 react-query 的 QueryState 同名，可直接传 query.state）。 */
+export interface ImportPollSnapshot {
+  /** 最近一次成功的数据（失败时 react-query 保留旧 data）。 */
+  data: readonly ImportJob[] | undefined;
+  /** 最近一次失败完成的时间戳（0 表示从未失败）。 */
+  errorUpdatedAt: number;
+  /** 最近一次成功完成的时间戳。 */
+  dataUpdatedAt: number;
+}
+
+/**
+ * 由查询状态推算「连续失败次数」，再交给 nextImportPollInterval 决策。
+ * 不能直接用 query-core v5 的 fetchFailureCount：它在每次新 fetch 开始时
+ * 都会被清零（query-core fetchState()），失败轮询永远停在个位数、跨轮询
+ * 不累计，退避永远不会触发；故按 dataUpdatedAt / errorUpdatedAt 是否推进
+ * 自行计数。一次回调里两者都推进（失败后紧跟成功）时以成功为准归零。
+ */
+export function createImportPollTimer(): (
+  snapshot: ImportPollSnapshot,
+) => number | false {
+  let consecutiveFailures = 0;
+  let seenErrorAt = 0;
+  let seenDataAt = 0;
+  return ({ data, errorUpdatedAt, dataUpdatedAt }) => {
+    if (errorUpdatedAt > seenErrorAt) {
+      seenErrorAt = errorUpdatedAt;
+      consecutiveFailures += 1;
+    }
+    if (dataUpdatedAt > seenDataAt) {
+      seenDataAt = dataUpdatedAt;
+      consecutiveFailures = 0;
+    }
+    return nextImportPollInterval(data, consecutiveFailures);
+  };
 }

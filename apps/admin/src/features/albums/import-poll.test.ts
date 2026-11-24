@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ImportJob, ImportJobStatus } from "@photo/shared";
 import {
   ACTIVE_POLL_INTERVAL_MS,
+  createImportPollTimer,
   nextImportPollInterval,
   PROBE_INTERVAL_MS,
 } from "./import-poll";
@@ -79,5 +80,82 @@ describe("nextImportPollInterval", () => {
     ];
     expect(nextImportPollInterval(jobs, 0)).toBe(ACTIVE_POLL_INTERVAL_MS);
     expect(nextImportPollInterval(jobs, 3)).toBe(PROBE_INTERVAL_MS);
+  });
+});
+
+describe("createImportPollTimer", () => {
+  test("连续失败 3 次后退避，退避中仍失败维持 60s，任一次成功恢复 2s", () => {
+    const tick = createImportPollTimer();
+    const running = [makeJob("RUNNING")];
+    // 首次成功加载：2s 轮询
+    expect(tick({ data: running, errorUpdatedAt: 0, dataUpdatedAt: 100 })).toBe(
+      ACTIVE_POLL_INTERVAL_MS,
+    );
+    // 连续失败（errorUpdatedAt 推进）：前 2 次仍 2s
+    expect(
+      tick({ data: running, errorUpdatedAt: 200, dataUpdatedAt: 100 }),
+    ).toBe(ACTIVE_POLL_INTERVAL_MS);
+    expect(
+      tick({ data: running, errorUpdatedAt: 300, dataUpdatedAt: 100 }),
+    ).toBe(ACTIVE_POLL_INTERVAL_MS);
+    // 第 3 次失败 → 退避
+    expect(
+      tick({ data: running, errorUpdatedAt: 400, dataUpdatedAt: 100 }),
+    ).toBe(PROBE_INTERVAL_MS);
+    // 退避探测仍失败 → 维持 60s
+    expect(
+      tick({ data: running, errorUpdatedAt: 500, dataUpdatedAt: 100 }),
+    ).toBe(PROBE_INTERVAL_MS);
+    // 任一次成功（dataUpdatedAt 推进）→ 计数归零 → 恢复 2s
+    expect(
+      tick({ data: running, errorUpdatedAt: 500, dataUpdatedAt: 600 }),
+    ).toBe(ACTIVE_POLL_INTERVAL_MS);
+  });
+
+  test("退避中探测成功且任务已终态 → 完全停止轮询", () => {
+    const tick = createImportPollTimer();
+    const running = [makeJob("RUNNING")];
+    expect(tick({ data: running, errorUpdatedAt: 0, dataUpdatedAt: 100 })).toBe(
+      ACTIVE_POLL_INTERVAL_MS,
+    );
+    expect(
+      tick({ data: running, errorUpdatedAt: 200, dataUpdatedAt: 100 }),
+    ).toBe(ACTIVE_POLL_INTERVAL_MS);
+    expect(
+      tick({ data: running, errorUpdatedAt: 300, dataUpdatedAt: 100 }),
+    ).toBe(ACTIVE_POLL_INTERVAL_MS);
+    expect(
+      tick({ data: running, errorUpdatedAt: 400, dataUpdatedAt: 100 }),
+    ).toBe(PROBE_INTERVAL_MS);
+    // 退避探测成功，返回数据显示任务已终态 → false
+    expect(
+      tick({
+        data: [makeJob("SUCCEEDED")],
+        errorUpdatedAt: 400,
+        dataUpdatedAt: 500,
+      }),
+    ).toBe(false);
+  });
+
+  test("状态未推进的重复回调（fetch 开始等）不重复计数", () => {
+    const tick = createImportPollTimer();
+    const running = [makeJob("RUNNING")];
+    expect(tick({ data: running, errorUpdatedAt: 0, dataUpdatedAt: 100 })).toBe(
+      ACTIVE_POLL_INTERVAL_MS,
+    );
+    expect(
+      tick({ data: running, errorUpdatedAt: 200, dataUpdatedAt: 100 }),
+    ).toBe(ACTIVE_POLL_INTERVAL_MS);
+    // 同一 errorUpdatedAt 重复回调（fetch 开始等状态变化）不累计
+    expect(
+      tick({ data: running, errorUpdatedAt: 200, dataUpdatedAt: 100 }),
+    ).toBe(ACTIVE_POLL_INTERVAL_MS);
+    expect(
+      tick({ data: running, errorUpdatedAt: 300, dataUpdatedAt: 100 }),
+    ).toBe(ACTIVE_POLL_INTERVAL_MS);
+    // 仍是第 3 次失败才退避
+    expect(
+      tick({ data: running, errorUpdatedAt: 400, dataUpdatedAt: 100 }),
+    ).toBe(PROBE_INTERVAL_MS);
   });
 });
