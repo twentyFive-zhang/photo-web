@@ -9,6 +9,7 @@ import {
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { ConfigService } from "@nestjs/config";
 import type { Admin } from "@photo/shared";
+import { Prisma } from "@prisma/client";
 import argon2 from "argon2";
 // biome-ignore lint/style/useImportType: NestJS DI needs the runtime import for constructor metadata
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -25,6 +26,12 @@ function toAdmin(admin: {
     createdAt: admin.createdAt.toISOString(),
   };
 }
+
+const isUniqueViolation = (
+  error: unknown,
+): error is Prisma.PrismaClientKnownRequestError =>
+  error instanceof Prisma.PrismaClientKnownRequestError &&
+  error.code === "P2002";
 
 @Injectable()
 export class AuthService {
@@ -70,7 +77,8 @@ export class AuthService {
   }
 
   /**
-   * 统一登录映射：sub 已有记录 → 直接登录；首次登录且在准入组 → 自动建号
+   * 统一登录映射：sub 已有记录 → 用户名未变直接登录、变了同步本地 username
+   * （新用户名撞本地重名 → 409）；首次登录且在准入组 → 自动建号
    * （记录来源 = sub 非空，passwordHash 为不可登录占位）；不在准入组 → 403；
    * 首登但本地已有同名账号 → 409（不消歧，原因见下）。
    */
@@ -89,7 +97,41 @@ export class AuthService {
       where: { sub: claims.sub },
     });
     if (existing) {
-      return toAdmin(existing);
+      // 用户名未变：直接登录
+      if (existing.username === claims.username) {
+        return toAdmin(existing);
+      }
+
+      // 身份源侧改名 → 同步本地 username（会话回查按本地 username 反查 IdP，
+      // 不同步会在改名后被 401 锁死，重新登录也修不回来）。新用户名与另一条
+      // Admin 撞名 → 与首登重名同样拒绝本次登录（409），不静默覆盖。
+      const collision = await this.prisma.admin.findUnique({
+        where: { username: claims.username },
+        select: { id: true },
+      });
+      if (collision) {
+        this.logger.warn(
+          `OIDC 登录拒绝：身份源新用户名与本地账号撞名 username=${claims.username} sub=${claims.sub}，请先处理本地重名账号`,
+        );
+        throw new ConflictException("本地已存在同名账号，请先处理");
+      }
+
+      const renamed = await this.prisma.admin
+        .update({
+          where: { id: existing.id },
+          data: { username: claims.username },
+        })
+        .catch((error: unknown) => {
+          // 撞名预检与更新之间存在并发窗口，唯一约束兜底同样按重名拒绝
+          if (isUniqueViolation(error)) {
+            throw new ConflictException("本地已存在同名账号，请先处理");
+          }
+          throw error;
+        });
+      this.logger.log(
+        `OIDC 用户名同步: ${existing.username} -> ${renamed.username} (sub=${claims.sub})`,
+      );
+      return toAdmin(renamed);
     }
 
     // 重名不消歧：会话回查只能按本地 username 反查 IdP（Authentik Core API
