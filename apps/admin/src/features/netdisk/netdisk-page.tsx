@@ -15,6 +15,7 @@ import {
   FolderPlus,
   Loader2,
   RefreshCw,
+  Trash2,
   Upload,
   XCircle,
 } from "lucide-react";
@@ -88,11 +89,9 @@ function NetdiskBrowser() {
   // 目录树状态（主树与新建文件夹弹框的父目录选择器共享同一份 nodes）
   const tree = useNetdiskTreeNodes(connected);
 
-  // 勾选状态（key = 网盘路径）：集合用于行渲染，map 存条目供导入/删除取值
+  // 勾选状态（key = 网盘路径）；条目在提交时从 tree.nodes 现查（与旧版一致，
+  // 已消失的条目静默剔除），不落快照
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [selectedEntries, setSelectedEntries] = useState<
-    Map<string, BaiduFileEntry>
-  >(new Map());
   const [importTarget, setImportTarget] = useState<
     CreateBaiduImportInput["entries"] | null
   >(null);
@@ -143,17 +142,10 @@ function NetdiskBrowser() {
       else next.delete(entry.path);
       return next;
     });
-    setSelectedEntries((prev) => {
-      const next = new Map(prev);
-      if (checked) next.set(entry.path, entry);
-      else next.delete(entry.path);
-      return next;
-    });
   }
 
   function clearSelection() {
     setSelected(new Set());
-    setSelectedEntries(new Map());
   }
 
   function refreshAll() {
@@ -375,10 +367,24 @@ function NetdiskBrowser() {
     );
   }
 
-  // 批量导入按钮可用性：至少一个文件夹或可导入的未导入图片
-  const selectionEntries: CreateBaiduImportInput["entries"] = [
-    ...selectedEntries.values(),
-  ];
+  // 批量导入按钮可用性：至少一个文件夹或可导入的未导入图片。
+  // 条目从 tree.nodes 现查（旧版行为）：勾选后条目消失（外部变更+刷新）则剔除
+  const selectionEntries: CreateBaiduImportInput["entries"] = [];
+  for (const path of selected) {
+    for (const node of Object.values(tree.nodes)) {
+      const hit = node?.entries.find((entry) => entry.path === path);
+      if (hit) {
+        selectionEntries.push({
+          fsId: hit.fsId,
+          path: hit.path,
+          serverFilename: hit.serverFilename,
+          isDir: hit.isDir,
+          size: hit.size,
+        });
+        break;
+      }
+    }
+  }
   const canImportSelection = selectionEntries.some(
     (entry) =>
       entry.isDir ||
@@ -470,6 +476,7 @@ function NetdiskBrowser() {
               variant="outline"
               className="border-red-900 text-red-400 hover:border-red-500"
             >
+              <Trash2 size={14} />
               删除选中…
             </Button>
             <Button onClick={clearSelection} type="button" variant="ghost">

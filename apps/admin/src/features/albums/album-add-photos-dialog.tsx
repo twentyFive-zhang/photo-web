@@ -112,9 +112,10 @@ export function AlbumAddPhotosDialog({
             open={open}
           />
         )}
-        {tab === "upload" && (
+        {/* 本机上传 tab 常驻挂载（仅 CSS 隐藏）：切 tab 不丢逐行状态与失败重试 */}
+        <div className={tab === "upload" ? "contents" : "hidden"}>
           <UploadTab albumId={albumId} onChanged={onChanged} onClose={close} />
-        )}
+        </div>
         {tab === "netdisk" && (
           <NetdiskTab
             albumId={albumId}
