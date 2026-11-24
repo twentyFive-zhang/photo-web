@@ -68,6 +68,8 @@ model Album {
   coverPhoto Photo?       @relation("AlbumCover", fields: [coverPhotoId], references: [id], onDelete: SetNull)
   // 成员关系（ADR 0006）：专辑由显式成员组成，与网盘目录无关
   members    AlbumPhoto[]
+  // 附带本专辑的导入任务（ADR 0007）；专辑删除后置空（任务降级为仅入库）
+  importJobs ImportJob[]
 
   @@index([visibility, publishedAt])
 }
@@ -157,8 +159,8 @@ model FeaturedPhoto {
   @@index([sortOrder])
 }
 
-/// 导入任务（ADR 0006 收编两段式第一步）：把网盘文件登记为照片，
-/// 不绑定专辑；专辑组成在专辑编辑页挑图完成。
+/// 导入任务（ADR 0006 收编两段式第一步）：把网盘文件登记为照片；
+/// ADR 0007 起可附带 albumId——导入成功后照片自动纳入该专辑（专辑页一步挂专辑）。
 model ImportJob {
   id        String       @id @default(cuid())
   source    ImportSource
@@ -169,9 +171,12 @@ model ImportJob {
   skipped   Int          @default(0)
   error     String?
   payload   Json?
+  // 可选附带专辑；专辑中途被删时置空，条目降级为仅入库
+  albumId   String?
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
+  album Album? @relation(fields: [albumId], references: [id], onDelete: SetNull)
   items ImportItem[]
 
   @@index([status, createdAt])

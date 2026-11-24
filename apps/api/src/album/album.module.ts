@@ -8,5 +8,7 @@ import { AlbumPublicController } from "./album-public.controller.js";
   imports: [AuthModule],
   controllers: [AlbumController, AlbumPublicController],
   providers: [AlbumService],
+  // 导出给 ImportModule：导入附带专辑时由 processor 写成员行（ADR 0007）
+  exports: [AlbumService],
 })
 export class AlbumModule {}

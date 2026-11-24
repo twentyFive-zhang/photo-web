@@ -36,8 +36,9 @@ export const baiduConnectionStatusSchema = z.object({
 export type BaiduConnectionStatus = z.infer<typeof baiduConnectionStatusSchema>;
 
 /**
- * 创建导入任务（ADR 0006 收编两段式第一步）：勾选的网盘条目（文件或文件夹，
- * 文件夹服务端展开）登记为照片——只建照片不进专辑；专辑组成在专辑编辑页挑图。
+ * 创建导入任务（ADR 0006 收编两段式第一步；ADR 0007 专辑页一步挂专辑）：
+ * 勾选的网盘条目（文件或文件夹，文件夹服务端展开）登记为照片——只建照片；
+ * 可选 albumId：导入成功的条目（含 sha256 去重命中的已有照片）自动纳入该专辑。
  */
 export const createBaiduImportInputSchema = z.object({
   entries: z
@@ -54,6 +55,8 @@ export const createBaiduImportInputSchema = z.object({
       }),
     )
     .min(1, "至少选择一个文件或文件夹"),
+  /** 可选：导入完成后把照片纳入该专辑（专辑不存在时整个请求 404）。 */
+  albumId: z.string().min(1).optional(),
 });
 export type CreateBaiduImportInput = z.infer<
   typeof createBaiduImportInputSchema
