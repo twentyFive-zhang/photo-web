@@ -70,6 +70,7 @@ export function toImportJob(
     failed: job.failed,
     skipped: job.skipped,
     error: job.error,
+    albumId: job.albumId,
     items: job.items.map(toImportItem),
     createdAt: job.createdAt.toISOString(),
     updatedAt: job.updatedAt.toISOString(),

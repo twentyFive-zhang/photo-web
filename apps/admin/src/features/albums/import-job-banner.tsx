@@ -5,12 +5,22 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api";
+import {
+  ACTIVE_STATUSES,
+  createImportPollTimer,
+  createTerminalInvalidator,
+} from "./import-poll";
 
-const ACTIVE_STATUSES = new Set(["QUEUED", "RUNNING"]);
+// 模块级轮询决策器：连续失败计数跨横幅重挂载保持，重挂载不从零开始高频轮询。
+const resolvePollInterval = createImportPollTimer();
+// 模块级终态失效触发器：按 jobId + status 翻转只失效一次，重挂载不重复失效。
+const resolveTerminalInvalidation = createTerminalInvalidator();
 
 /**
- * 最近导入任务进度横幅（全局视角，ADR 0006：导入只产照片不进专辑）：
- * 活跃任务每 2s 轮询，终态停止并提示到专辑编辑页挑图。
+ * 最近导入任务进度横幅（ADR 0007：可附带 albumId 一步挂专辑）：
+ * 活跃任务每 2s 轮询，终态停止；附带专辑的任务首次进入终态时
+ * 自动失效该专辑的查询，专辑页无需手刷即见新成员。
+ * 轮询节奏（含失败退避）与终态判定集中在 import-poll.ts。
  */
 export function ImportJobBanner() {
   const queryClient = useQueryClient();
@@ -19,10 +29,10 @@ export function ImportJobBanner() {
   const jobsQuery = useQuery({
     queryKey: ["import-jobs"],
     queryFn: () => apiFetch<ImportJob[]>("/admin/imports?take=5"),
-    refetchInterval: (query) => {
-      const jobs = query.state.data ?? [];
-      return jobs.some((job) => ACTIVE_STATUSES.has(job.status)) ? 2000 : false;
-    },
+    // 2s 轮询本身就是重试，关掉 react-query 内部重试，
+    // 避免接口报错时每个周期 ×3 放大请求量。
+    retry: false,
+    refetchInterval: (query) => resolvePollInterval(query.state),
   });
 
   const retryMutation = useMutation({
@@ -49,6 +59,22 @@ export function ImportJobBanner() {
     const timer = setTimeout(() => setDismissed(true), 3000);
     return () => clearTimeout(timer);
   }, [job?.status]);
+
+  // 任务翻转到终态（SUCCEEDED/PARTIAL/FAILED）且附带专辑时，失效该专辑的
+  // 查询键——「网盘选」导入完成后专辑页自动刷新，无需手刷/重进。
+  const jobStatus = job?.status;
+  const jobAlbumId = job?.albumId ?? null;
+  useEffect(() => {
+    if (!jobId || !jobStatus) return;
+    const keys = resolveTerminalInvalidation({
+      id: jobId,
+      status: jobStatus,
+      albumId: jobAlbumId,
+    });
+    for (const queryKey of keys) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
+  }, [jobAlbumId, jobId, jobStatus, queryClient]);
 
   if (jobsQuery.isPending || !job || dismissed) {
     return null;
@@ -80,7 +106,9 @@ export function ImportJobBanner() {
           </span>
           {job.status === "SUCCEEDED" && (
             <span className="text-neutral-500">
-              照片已入照片库，用「添加照片」挑进专辑
+              {job.albumId
+                ? "照片已入照片库并已纳入本专辑"
+                : "照片已入照片库，用「添加照片」挑进专辑"}
             </span>
           )}
         </div>
