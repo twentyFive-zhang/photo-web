@@ -33,3 +33,11 @@
 
 - admin/web 侧多写后缀：`scripts/check-import-extensions.ts` 报错（Biome 无「禁止后缀」的现成规则，故用脚本）。
 - api/shared 侧漏写后缀：`biome.json` overrides 中 `useImportExtensions` + `forceJsExtensions: true` 报错。
+
+## 新 checkout 引导
+
+- 全新 checkout（或删掉 `node_modules` 后）先跑 **`bun run bootstrap`**，再做其他事。它串起：`bun install` → build `packages/shared`（dist）→ `prisma generate`（Prisma Client）→ `next typegen`（`.next/types` 路由类型）。
+- 只 `bun install` 不跑 bootstrap，会出两类**与代码无关的假红**：
+  - `bun test`：`@prisma/client` 未生成，`prisma-errors.ts` 里 `instanceof PrismaClientKnownRequestError` 直接抛 TypeError，api 侧测试失败；
+  - IDE 直接对 `apps/web` 跑 tsc 时：`.next/types` 缺失，`layout.tsx` 报 `Cannot find name 'LayoutProps'`（root `bun run typecheck` 不受影响，它已自带 generate 步骤）。
+- bootstrap 幂等且无副作用，不依赖 `.env`，拉取后重跑无害；依赖有变动时建议重跑。
